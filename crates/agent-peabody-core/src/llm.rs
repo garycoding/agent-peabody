@@ -29,7 +29,8 @@ pub struct Reply {
     /// The answer alone: a reasoning model's reasoning (`reasoning_content`, or a leading
     /// `<think>` block) is left out.
     pub content: String,
-    /// The tokens the request and the reply took together, where the server reports them.
+    /// The tokens the request and the kept answer take together, where the server reports
+    /// them: the reasoning's tokens are not counted, since the reasoning is not kept.
     pub total_tokens: Option<u32>,
 }
 
@@ -80,17 +81,16 @@ fn strip_thinking(s: &str) -> &str {
 
 pub fn parse_reply(v: &Value) -> Reply {
     let content = v["choices"][0]["message"]["content"].as_str().unwrap_or("");
+    let u = &v["usage"];
+    let reasoning = u["completion_tokens_details"]["reasoning_tokens"]
+        .as_u64()
+        .unwrap_or(0);
     Reply {
         content: strip_thinking(content).trim().to_string(),
-        total_tokens: v["usage"]["total_tokens"]
+        total_tokens: u["total_tokens"]
             .as_u64()
-            .or_else(|| {
-                Some(
-                    v["usage"]["prompt_tokens"].as_u64()?
-                        + v["usage"]["completion_tokens"].as_u64()?,
-                )
-            })
-            .map(|n| n as u32),
+            .or_else(|| Some(u["prompt_tokens"].as_u64()? + u["completion_tokens"].as_u64()?))
+            .map(|n| n.saturating_sub(reasoning) as u32),
     }
 }
 
@@ -230,6 +230,11 @@ mod tests {
                 total_tokens: None
             }
         );
+        // The reasoning's tokens are not counted, as LM Studio reports them for Gemma.
+        let v = json!({"choices": [{"message": {"content": "Four."}}],
+                       "usage": {"prompt_tokens": 569, "completion_tokens": 3797, "total_tokens": 4366,
+                                 "completion_tokens_details": {"reasoning_tokens": 3787}}});
+        assert_eq!(parse_reply(&v).total_tokens, Some(579));
     }
 
     #[test]

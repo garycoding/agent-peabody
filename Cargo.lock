@@ -13,9 +13,11 @@ name = "agent-peabody-app"
 version = "0.0.0"
 dependencies = [
  "agent-peabody-core",
+ "serde",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",
+ "tokio",
 ]
 
 [[package]]

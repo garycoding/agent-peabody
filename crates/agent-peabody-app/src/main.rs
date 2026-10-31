@@ -5,14 +5,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app;
+
 fn main() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            use tauri::Manager;
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_focus();
-            }
-        }))
-        .run(tauri::generate_context!())
-        .expect("the window could not be opened");
+    app::run();
 }
