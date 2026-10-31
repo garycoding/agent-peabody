@@ -780,3 +780,45 @@ search({"query":"weather"})"#
             .starts_with("[reasoning]\nthinking\n\n[answer]\nSunny.")
     );
 }
+
+/// A proxy in front of `to` that closes its first connection as soon as a request
+/// arrives, as a server does with an idle connection at the moment a client reuses it.
+async fn dropping_first_connection(to: Endpoint) -> Endpoint {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let target = to.url.trim_start_matches("http://").to_string();
+    tokio::spawn(async move {
+        let mut first = true;
+        while let Ok((mut inbound, _)) = listener.accept().await {
+            if first {
+                first = false;
+                let mut buf = [0u8; 64];
+                let _ = tokio::io::AsyncReadExt::read(&mut inbound, &mut buf).await;
+                drop(inbound);
+                continue;
+            }
+            let target = target.clone();
+            tokio::spawn(async move {
+                let mut outbound = tokio::net::TcpStream::connect(target).await.unwrap();
+                let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+            });
+        }
+    });
+    Endpoint::new(&format!("http://{addr}/mcp"))
+}
+
+#[tokio::test]
+async fn sends_a_tool_request_again_when_its_connection_closes_unanswered() {
+    let tools = Tools::default();
+    let direct = tools_server(&tools, "stub").await;
+    let base = Endpoint::new(direct.url.trim_end_matches("/mcp"));
+    let ep = dropping_first_connection(base).await;
+    let session = agent_peabody_core::mcp::Session::open(ep)
+        .await
+        .expect("opened on the second try");
+    assert_eq!(session.name, "stub");
+    let listed = session.tools().await.unwrap();
+    assert_eq!(listed[0]["function"]["name"], "search");
+    let (out, failed) = session.call("search", json!({"query": "x"})).await;
+    assert!(!failed, "{out}");
+}

@@ -350,7 +350,7 @@ impl Pipeline {
                 continue;
             }
             if self.servers[i].is_none() {
-                match mcp::Session::open(self.c.clone(), ep.clone()).await {
+                match mcp::Session::open(ep.clone()).await {
                     Ok(s) => self.servers[i] = Some(s),
                     Err(e) => {
                         failures.push(format!("{}: {e}", ep.url));

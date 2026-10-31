@@ -75,6 +75,8 @@ Tools and controls, by the owner on 2026-10-31:
 
 - **D19 Model traffic shown:** every request to the model and every reply is a line in the window, collapsed to a summary and opened by a click, so that what the model was given and what it returned can be checked (asked for after the tool tests, 2026-10-31). Each line's label carries its time; the speaker's label is "Input", not "You".
 
+- **Fresh connections to MCP servers (v0.5.1):** a weather call sent 5 s after the tool list never reached aqua-roaming: uvicorn closes an idle connection after 5 s, and Peabody reused the pooled connection just as it closed ("error sending request"). MCP requests now go on a fresh connection each (about a millisecond on the LAN), and a request that fails to send, or whose connection closes unanswered, is sent once more.
+
 Made during the build, within these rulings:
 
 - The tokens counted towards the window exclude the reasoning's, since the reasoning is not kept; counting them would summarise far too soon (found in the live test).
