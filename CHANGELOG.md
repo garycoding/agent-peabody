@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.3.0] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Features
+
+- A setting to let the model think, off by default (#10)
+
 ## [v0.2.0] - 2026-10-31
 
 ### Highlights
