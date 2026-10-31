@@ -449,6 +449,22 @@ impl Pipeline {
         }
     }
 
+    /// Drops the question in hand after its answer was interrupted: an unanswered question
+    /// is not kept, so that the exchanges stay paired.
+    pub fn abandon(&mut self) {
+        if self
+            .conversation
+            .messages
+            .last()
+            .is_some_and(|m| m.role == "user")
+        {
+            self.conversation.messages.pop();
+        }
+        (self.emit)(Event::Notice {
+            text: "The question in hand was abandoned.".into(),
+        });
+    }
+
     pub async fn run(&mut self, c: Command) {
         match c {
             Command::Clear => self.clear(),
@@ -796,7 +812,23 @@ pub fn start(settings: Settings, conversation: PathBuf, emit: Emit, timing: Timi
         pipeline.connect().await;
         loop {
             tokio::select! {
-                Some(heard) = rx.recv() => pipeline.answer(&heard).await,
+                Some(heard) = rx.recv() => {
+                    // A command from the window does not wait for the answer: the question
+                    // in hand is abandoned, so that Clear and Compact act at once even while
+                    // the model server is slow or busy with another client.
+                    let interrupted = {
+                        let answer = pipeline.answer(&heard);
+                        tokio::pin!(answer);
+                        tokio::select! {
+                            _ = &mut answer => None,
+                            Some(c) = cmds.recv() => Some(c),
+                        }
+                    };
+                    if let Some(c) = interrupted {
+                        pipeline.abandon();
+                        pipeline.run(c).await;
+                    }
+                }
                 Some(c) = cmds.recv() => pipeline.run(c).await,
                 else => break,
             }

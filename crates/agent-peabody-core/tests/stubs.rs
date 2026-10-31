@@ -108,6 +108,8 @@ fn grapto_app(g: Grapto) -> Router {
 struct Model {
     replies: Arc<Mutex<Vec<(StatusCode, Value)>>>,
     requests: Arc<Mutex<Vec<Value>>>,
+    /// How long each answer takes, as a slow or busy server's would.
+    delay: Arc<Mutex<Duration>>,
 }
 
 fn reply(content: &str, total: u32) -> (StatusCode, Value) {
@@ -125,6 +127,8 @@ fn model_app(m: Model) -> Router {
             post(
                 |State(m): State<Model>, axum::Json(body): axum::Json<Value>| async move {
                     m.requests.lock().unwrap().push(body);
+                    let delay = *m.delay.lock().unwrap();
+                    tokio::time::sleep(delay).await;
                     let mut r = m.replies.lock().unwrap();
                     let (s, v) = if r.is_empty() {
                         reply("Fine.", 100)
@@ -821,4 +825,40 @@ async fn sends_a_tool_request_again_when_its_connection_closes_unanswered() {
     assert_eq!(listed[0]["function"]["name"], "search");
     let (out, failed) = session.call("search", json!({"query": "x"})).await;
     assert!(!failed, "{out}");
+}
+
+#[tokio::test]
+async fn clear_and_compact_do_not_wait_for_a_slow_answer() {
+    let (g, model, voice) = (Grapto::default(), Model::default(), Voice::default());
+    g.bodies.lock().unwrap().push(segment(
+        1,
+        "a question the model is slow to answer",
+        "peabody",
+    ));
+    *model.delay.lock().unwrap() = Duration::from_secs(60);
+    let mut s = settings(&model, &voice).await;
+    s.graptostream = serve(grapto_app(g.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("c.json");
+    let (emit, events) = collect();
+    let running = pipeline::start(s, path.clone(), emit, Timing::default());
+    wait_for(|| !model.requests.lock().unwrap().is_empty()).await;
+    running.command(pipeline::Command::Clear);
+    wait_for(|| events.lock().unwrap().contains(&Event::Cleared)).await;
+    running.stop().await;
+    let ev = events.lock().unwrap();
+    assert!(ev.contains(&Event::Notice {
+        text: "The question in hand was abandoned.".into()
+    }));
+    assert!(
+        voice.said.lock().unwrap().is_empty(),
+        "nothing was answered"
+    );
+    let (emit, _) = collect();
+    assert!(
+        Pipeline::new(Settings::default(), path, emit)
+            .conversation
+            .messages
+            .is_empty()
+    );
 }
