@@ -83,7 +83,8 @@ function fields() {
 function openSettings() {
   for (const f of fields()) {
     const v = f.name.split(".").reduce((o, k) => o?.[k], state.settings);
-    f.value = Array.isArray(v) ? v.join("\n") : v ?? "";
+    if (f.type === "checkbox") f.checked = Boolean(v);
+    else f.value = Array.isArray(v) ? v.join("\n") : v ?? "";
   }
   $("context-note").textContent = state.settings.context_size == null && state.size
     ? `The server reports ${state.size} tokens. Leave empty to use it.`
@@ -115,6 +116,10 @@ $("form").addEventListener("submit", async (ev) => {
     const path = f.name.split(".");
     const last = path.pop();
     const target = path.reduce((o, k) => o[k], s);
+    if (f.type === "checkbox") {
+      target[last] = f.checked;
+      continue;
+    }
     const v = f.value.trim();
     target[last] =
       f.name === "context_size" ? (v ? Number(v) : null)

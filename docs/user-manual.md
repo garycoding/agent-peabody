@@ -45,6 +45,7 @@ Peabody remembers the conversation, including after it is closed and reopened. T
 | Model server address and token | For LM Studio, `http://127.0.0.1:1234` (or `http://<machine>.local:1234` with "Serve on local network" on); for llama.cpp, the address `llama-server` listens on. A token only where the server is set to require one. |
 | Model | The model's name as the server gives it. List models asks the server. |
 | Context size | Leave empty to use the size the server reports; set it where the server reports none or you want Peabody to summarise sooner. |
+| Let the model think before answering | Off by default. A reasoning model such as Gemma 4 thinks before it answers, which helps with hard questions but takes far longer: on a MacBook Air, a one-sentence answer took 20 seconds with thinking and 2 seconds without. Off, Peabody asks the server to skip the thinking (`"reasoning_effort": "none"`); LM Studio honours this. A server that does not know the request ignores it. |
 
 Saving the settings reconnects at once.
 

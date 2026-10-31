@@ -60,6 +60,9 @@ pub struct Settings {
     /// The context window's size in tokens, where the server does not report it or the
     /// owner overrides what it reports.
     pub context_size: Option<u32>,
+    /// Whether a reasoning model may think before it answers; off by default, since the
+    /// thinking made a one-sentence answer take 19.9 s instead of 2.1 s on pacific.
+    pub thinking: bool,
     /// Said at once on each utterance, one chosen at random, before the answer; phonorheos
     /// keeps their speech so that they play without delay. None turns this off.
     pub instant_replies: Vec<String>,
@@ -76,6 +79,7 @@ impl Default for Settings {
             llm: Endpoint::default(),
             model: String::new(),
             context_size: None,
+            thinking: false,
             instant_replies: DEFAULT_INSTANT_REPLIES.map(String::from).to_vec(),
         }
     }
