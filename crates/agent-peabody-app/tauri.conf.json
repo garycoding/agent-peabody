@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Peabody",
+  "mainBinaryName": "agent-peabody",
+  "version": "0.0.0",
+  "identifier": "io.github.garycoding.agent-peabody",
+  "build": { "frontendDist": "../../ui" },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [{ "label": "main", "title": "Peabody", "width": 720, "height": 640, "minWidth": 520, "minHeight": 420 }],
+    "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "deb", "appimage"],
+    "category": "Utility",
+    "shortDescription": "A spoken conversation with an LLM",
+    "copyright": "© 2026 Gary Frattarola",
+    "license": "AGPL-3.0-or-later",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.png"],
+    "macOS": { "minimumSystemVersion": "15.0", "hardenedRuntime": true }
+  }
+}

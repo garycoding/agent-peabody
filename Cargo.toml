@@ -1,0 +1,15 @@
+# The version of agent-peabody lives in VERSION.txt (bumped at release by `git bump`);
+# the crates' own version stays 0.0.0 and is never shipped. See docs/CONTRIBUTING.md.
+[workspace]
+resolver = "3"
+members = ["crates/agent-peabody-core", "crates/agent-peabody-app"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/garycoding/agent-peabody"
+publish = false
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
