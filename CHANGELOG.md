@@ -4,6 +4,17 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Features
+
+- Several MCP servers, tools listed for the model, and window controls (#14)
+- Show each request to the model and its reply, and each line's time (#15)
+
 ## [v0.4.0] - 2026-10-31
 
 ### Highlights
