@@ -30,6 +30,8 @@ Say the spoken name and then your question, in one breath: "Peabody, what is the
 
 As soon as it hears you, Peabody says a short phrase such as "One moment please...", so that the wait for the model is not silent; on a slow machine the answer can take several seconds. It chooses one of its instant replies at random, never the one it said last. When it starts, it asks phonorheos to make and keep the speech for every instant reply without playing it, so that each plays at once when wanted; if phonorheos has been restarted since, the first use of a phrase takes a moment and it is kept again. The instant reply is not part of the conversation: the model never sees it.
 
+With a tools server set, Peabody offers its tools to the model with each question. When the model asks for one (a web search, say), Peabody calls it, shows the call in the window ("Tool: search: current time in California"), and passes the result back, up to four rounds, after which the model must answer with what it has. Each round adds the tool's time and another turn of the model's, so an answer that needs a search takes some seconds longer. The tool calls and their results are not kept in the conversation; a result longer than 8000 characters is cut. A fourth dot in the window shows whether the tools server answers; if it cannot be reached, Peabody answers without tools.
+
 Peabody remembers the conversation, including after it is closed and reopened. There is no way to start afresh: when the conversation grows to three quarters of the model's context window, Peabody asks the model to summarise all but the last four exchanges, and carries on from the summary. The window shows each summary.
 
 ## Settings
@@ -45,6 +47,7 @@ Peabody remembers the conversation, including after it is closed and reopened. T
 | Model server address and token | For LM Studio, `http://127.0.0.1:1234` (or `http://<machine>.local:1234` with "Serve on local network" on); for llama.cpp, the address `llama-server` listens on. A token only where the server is set to require one. |
 | Model | The model's name as the server gives it. List models asks the server. |
 | Context size | Leave empty to use the size the server reports; set it where the server reports none or you want Peabody to summarise sooner. |
+| Tools address and token | An MCP server whose tools the model may use before it answers, such as aqua-roaming's web search at `http://trixie.local:35830/mcp`. Leave empty for none. A token only where the server requires one. |
 | Let the model think before answering | Off by default. A reasoning model such as Gemma 4 thinks before it answers, which helps with hard questions but takes far longer: on a MacBook Air, a one-sentence answer took 20 seconds with thinking and 2 seconds without. Off, Peabody asks the server to skip the thinking (`"reasoning_effort": "none"`); LM Studio honours this. A server that does not know the request ignores it. |
 
 Saving the settings reconnects at once.
