@@ -1,0 +1,27 @@
+# Catch-all REUSE annotations so whole trees are covered without per-file
+# headers. Per-file SPDX headers still win where present. See the handbook's licensing.md.
+version = 1
+
+SPDX-PackageName = "agent-peabody"
+SPDX-PackageSupplier = "Gary Frattarola <garyf@parkviewlab.ai>"
+
+# --- Documentation → CC-BY-4.0 ---------------------------------------------
+[[annotations]]
+path = ["docs/**", "README.md", "LICENSING.md", "CHANGELOG.md"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Gary Frattarola <garyf@parkviewlab.ai>"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+# --- Code, build scripts, configs, version pin → AGPL-3.0-or-later ----------
+[[annotations]]
+path = ["LICENSE", "VERSION.txt", ".gitignore", ".github/**", "AGENTS.md", "CLAUDE.md", "Cargo.toml", "Cargo.lock", "crates/**/Cargo.toml", "crates/agent-peabody-app/tauri.conf.json", "crates/agent-peabody-app/capabilities/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Gary Frattarola <garyf@parkviewlab.ai>"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# --- Brand marks: the app icon, its source and the files made from it → all rights reserved
+[[annotations]]
+path = ["brand/**", "crates/agent-peabody-app/icons/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Gary Frattarola <garyf@parkviewlab.ai>"
+SPDX-License-Identifier = "LicenseRef-AllRightsReserved"

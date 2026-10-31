@@ -1,0 +1,13 @@
+LicenseRef-AllRightsReserved
+
+Copyright (c) 2026 Gary Frattarola. All rights reserved.
+
+The files covered by this license — the ParkviewLab brand marks and logos
+(brand/logos/) — are NOT released under an open-source or open-content license.
+No permission is granted to use, copy, modify, or distribute them except as
+expressly authorized in writing by the copyright holder.
+
+(The bundled Michroma typeface, brand/fonts/, is third-party and is covered
+separately by the SIL Open Font License 1.1 — see LICENSES/OFL-1.1.txt.)
+
+Inquiries: garyf@parkviewlab.ai

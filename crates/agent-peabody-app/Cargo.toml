@@ -1,0 +1,23 @@
+[package]
+name = "agent-peabody-app"
+description = "Peabody: a spoken conversation with an LLM"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "agent-peabody"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[lints]
+workspace = true
+
+[dependencies]
+agent-peabody-core = { version = "0.0.0", path = "../agent-peabody-core" }
+tauri = "2"
+tauri-plugin-single-instance = "2"

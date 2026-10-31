@@ -1,0 +1,5 @@
+target/
+dist/
+.DS_Store
+notarization.json
+crates/agent-peabody-app/gen/
