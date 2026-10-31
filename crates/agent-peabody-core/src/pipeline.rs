@@ -3,15 +3,18 @@
 
 //! What Peabody does: each utterance heard through graptostream goes into the
 //! conversation, to the model, and its answer out through phonorheos, one at a time and
-//! in the order heard.
+//! in the order heard. Where an MCP server is set, its tools (a web search, say) are
+//! offered to the model, and Peabody calls the ones it asks for before it answers.
 
 use crate::conversation::Conversation;
 use crate::graptostream::{self, Link, Listen};
 use crate::llm::{self, Message};
+use crate::mcp;
 use crate::phonorheos::Say;
 use crate::settings::Settings;
 use crate::{http, phonorheos};
 use serde::Serialize;
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,6 +24,9 @@ use tokio::task::JoinHandle;
 
 /// Spoken when the model returns an empty answer.
 pub const NO_ANSWER: &str = "I have no answer to that.";
+/// The most rounds of tool calls for one question; after them the model is asked to
+/// answer with what it has, so that a model that keeps searching cannot loop.
+pub const MAX_TOOL_ROUNDS: usize = 4;
 /// Spoken when the model cannot be reached or refuses the request.
 pub const NO_MODEL: &str = "I could not get an answer from the model.";
 
@@ -30,6 +36,8 @@ pub enum Service {
     Graptostream,
     Phonorheos,
     Llm,
+    /// The MCP server whose tools the model is offered.
+    Tools,
 }
 
 /// What the window is told.
@@ -52,6 +60,10 @@ pub enum Event {
     },
     /// The instant reply said while the model is asked.
     Holding {
+        text: String,
+    },
+    /// A tool the model asked for, as it is called.
+    Tool {
         text: String,
     },
     Replied {
@@ -80,6 +92,8 @@ pub struct Pipeline {
     pub chat_failed: Arc<AtomicBool>,
     /// The instant reply said last, which is not said next.
     last_instant: Option<usize>,
+    /// The MCP session and its tools, opened when first needed and again after a failure.
+    tools: Option<(mcp::Session, Vec<Value>)>,
     emit: Emit,
 }
 
@@ -94,6 +108,7 @@ impl Pipeline {
             context: None,
             chat_failed: Arc::default(),
             last_instant: None,
+            tools: None,
             emit,
         }
     }
@@ -171,15 +186,7 @@ impl Pipeline {
         let mut compacted = false;
         let reply = loop {
             let req = self.conversation.request(&self.settings.system_prompt);
-            match llm::chat(
-                &self.c,
-                &self.settings.llm,
-                &self.settings.model,
-                self.settings.thinking,
-                &req,
-            )
-            .await
-            {
+            match self.ask(&req).await {
                 Ok(r) => break Ok(r),
                 Err(llm::Error::ContextExceeded(_)) if !compacted => {
                     compacted = true;
@@ -238,6 +245,91 @@ impl Pipeline {
         self.report_context();
     }
 
+    /// Asks the model, offering the MCP server's tools where one is set, and calls the
+    /// tools it asks for until it answers. The calls and their results go to the model
+    /// alone: they are not kept in the conversation.
+    async fn ask(&mut self, req: &[Message]) -> Result<llm::Reply, llm::Error> {
+        let tools = self.offer_tools().await;
+        let mut messages: Vec<Value> = req.iter().map(|m| json!(m)).collect();
+        for round in 0..=MAX_TOOL_ROUNDS {
+            let offer: &[Value] = if round < MAX_TOOL_ROUNDS { &tools } else { &[] };
+            let r = llm::chat(
+                &self.c,
+                &self.settings.llm,
+                &self.settings.model,
+                self.settings.thinking,
+                &messages,
+                offer,
+            )
+            .await?;
+            if r.tool_calls.is_empty() || offer.is_empty() {
+                return Ok(r);
+            }
+            messages.push(
+                json!({"role": "assistant", "content": r.content, "tool_calls": r.tool_calls}),
+            );
+            for call in &r.tool_calls {
+                let output = self.call_tool(call).await;
+                messages
+                    .push(json!({"role": "tool", "tool_call_id": call["id"], "content": output}));
+            }
+        }
+        unreachable!("the last round offers no tools, so it returns")
+    }
+
+    /// The tools to offer: none where no MCP server is set or it cannot be reached.
+    async fn offer_tools(&mut self) -> Vec<Value> {
+        if self.settings.tools.url.trim().is_empty() {
+            return Vec::new();
+        }
+        if self.tools.is_none() {
+            let opened = match mcp::Session::open(self.c.clone(), self.settings.tools.clone()).await
+            {
+                Ok(s) => s.tools().await.map(|t| (s, t)),
+                Err(e) => Err(e),
+            };
+            match opened {
+                Ok(st) => {
+                    self.link(Service::Tools, Ok(()));
+                    self.tools = Some(st);
+                }
+                Err(e) => {
+                    self.link(Service::Tools, Err(e));
+                    return Vec::new();
+                }
+            }
+        }
+        self.tools
+            .as_ref()
+            .map(|(_, t)| t.clone())
+            .unwrap_or_default()
+    }
+
+    async fn call_tool(&mut self, call: &Value) -> String {
+        let f = &call["function"];
+        let name = f["name"].as_str().unwrap_or_default();
+        // The arguments are a JSON string by the chat API's contract; some servers send
+        // an object.
+        let args = match &f["arguments"] {
+            Value::String(s) => serde_json::from_str(s).unwrap_or_else(|_| json!({})),
+            Value::Object(_) => f["arguments"].clone(),
+            _ => json!({}),
+        };
+        (self.emit)(Event::Tool {
+            text: describe_call(name, &args),
+        });
+        let Some((session, _)) = &self.tools else {
+            return "The tool is not available.".into();
+        };
+        let (out, failed) = session.call(name, args).await;
+        if failed {
+            // The session may have lapsed; it is opened afresh for the next question.
+            self.tools = None;
+            self.link(Service::Tools, Err(out.clone()));
+        }
+        out
+    }
+
     /// Summarises all but the last exchanges; whether it did.
     async fn compact(&mut self) -> bool {
         let Some(req) = self.conversation.compaction_request() else {
@@ -249,6 +341,7 @@ impl Pipeline {
             &self.settings.model,
             self.settings.thinking,
             &req,
+            &[],
         )
         .await
         {
@@ -293,6 +386,27 @@ impl Pipeline {
             self.chat_failed.store(r.is_err(), Ordering::Relaxed);
         }
         (self.emit)(link_event(service, r));
+    }
+}
+
+/// A tool call as the window shows it: `search: current time in California`.
+fn describe_call(name: &str, args: &Value) -> String {
+    let what = match args {
+        Value::Object(m) if m.len() == 1 => m.values().next().map(|v| match v {
+            Value::String(s) => s.clone(),
+            v => v.to_string(),
+        }),
+        Value::Object(m) => m
+            .get("query")
+            .or_else(|| m.get("url"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| Some(args.to_string())),
+        _ => None,
+    };
+    match what {
+        Some(w) => format!("{name}: {w}"),
+        None => name.to_string(),
     }
 }
 

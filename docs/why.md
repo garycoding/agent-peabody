@@ -62,6 +62,11 @@ Thinking, by the owner on 2026-10-31:
 
 - **D14 Thinking off:** a setting, off by default, decides whether a reasoning model may think before it answers; off, every chat request (answers and summaries alike) carries `"reasoning_effort": "none"`. The owner asked for this because answers were slow. Evidence on pacific's LM Studio with `google/gemma-4-12b`, one question asking for one sentence: no field, 19.9 s and 274 reasoning tokens; `reasoning_effort` `"none"`, 2.1 s and none; `"low"`, 18.8 s and 268; `chat_template_kwargs.enable_thinking` false, 16.7 s and 234; `reasoning.effort` `"none"`, 18.6 s and 260. Whether llama.cpp's server honours the field was not checked.
 
+Tools, by the owner on 2026-10-31:
+
+- **D15 Peabody runs the tools:** web search through aqua-roaming (the lab's SearXNG MCP server on trixie) is offered by Peabody itself, as an MCP client over Streamable HTTP, rather than by LM Studio. LM Studio runs MCP tools only through its own `/api/v1/chat`, which needs "Require Authentication" and "Allow calling servers from mcp.json" on, documents no message roles for its input, so it cannot take Peabody's kept conversation, and is LM Studio's alone. Peabody offers the tools in the standard chat request's `tools`, which Gemma 4 in LM Studio answered with a correct `search` call (checked 2026-10-31), and the same request should serve llama.cpp (not checked). Speed did not decide it: by reasoning, not measurement, either route spends the same model and search time.
+- Within that ruling: at most four rounds of tool calls a question, then a request with no tools; results cut at 8000 characters (about 2000 tokens), since a fetched page can be 50 000; calls and results not kept in the conversation. The token count after a tool-using answer includes the results, so the conversation is summarised slightly early rather than late.
+
 Made during the build, within these rulings:
 
 - The tokens counted towards the window exclude the reasoning's, since the reasoning is not kept; counting them would summarise far too soon (found in the live test).

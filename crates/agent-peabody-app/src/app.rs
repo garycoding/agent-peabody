@@ -116,6 +116,7 @@ fn service_name(s: Service) -> &'static str {
         Service::Graptostream => "graptostream",
         Service::Phonorheos => "phonorheos",
         Service::Llm => "llm",
+        Service::Tools => "tools",
     }
 }
 

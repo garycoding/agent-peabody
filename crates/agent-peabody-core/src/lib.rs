@@ -7,6 +7,7 @@ pub mod conversation;
 pub mod graptostream;
 pub mod http;
 pub mod llm;
+pub mod mcp;
 pub mod phonorheos;
 pub mod pipeline;
 pub mod settings;
