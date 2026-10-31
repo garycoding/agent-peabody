@@ -1,0 +1,36 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Gary Frattarola <garyf@parkviewlab.ai>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Builds the installers into dist/: on macOS the app in a disk image
+# (agent-peabody-<version>-macos-arm64.dmg), on Linux a .deb and an AppImage
+# (agent-peabody-<version>-linux-amd64.*). Signing on macOS: SIGN_IDENTITY (CI
+# sets the Developer ID identity), else the bundle is signed ad hoc.
+set -e
+cd "$(dirname "$0")/.."
+VERSION=$(tr -d '[:space:]' < VERSION.txt)
+# Tauri wants semver: 0.1.0.dev0 becomes 0.1.0-dev0.
+SEMVER=$(printf '%s' "$VERSION" | sed -E 's/\.dev([0-9]+)$/-dev\1/')
+APP=crates/agent-peabody-app
+case "$(uname)" in
+  Darwin) OS=macos-arm64; BUNDLES=app,dmg ;;
+  Linux) OS=linux-amd64; BUNDLES=deb,appimage ;;
+  *) echo "unsupported system: $(uname)" >&2; exit 1 ;;
+esac
+CONFIG=$(printf '{"version":"%s"}' "$SEMVER")
+if [ "$(uname)" = Darwin ]; then
+  export APPLE_SIGNING_IDENTITY="${SIGN_IDENTITY:--}"
+else
+  # linuxdeploy's strip fails on newer libraries' relocations.
+  export NO_STRIP=true
+fi
+(cd "$APP" && cargo tauri build --bundles "$BUNDLES" --config "$CONFIG")
+mkdir -p dist
+B=target/release/bundle
+case "$OS" in
+  macos-arm64) cp "$B"/dmg/*.dmg "dist/agent-peabody-$VERSION-$OS.dmg" ;;
+  linux-amd64)
+    cp "$B"/deb/*.deb "dist/agent-peabody-$VERSION-$OS.deb"
+    cp "$B"/appimage/*.AppImage "dist/agent-peabody-$VERSION-$OS.AppImage" ;;
+esac
+ls -l dist
