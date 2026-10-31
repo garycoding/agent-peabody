@@ -13,6 +13,7 @@ use crate::{http, phonorheos};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -69,6 +70,9 @@ pub struct Pipeline {
     pub conversation: Conversation,
     /// The context window's size: the setting's, else the server's, else unknown.
     pub context: Option<u32>,
+    /// Whether the last chat request failed, so that the health check, which only asks
+    /// for the model list, does not show the model server as answering.
+    pub chat_failed: Arc<AtomicBool>,
     emit: Emit,
 }
 
@@ -81,6 +85,7 @@ impl Pipeline {
             path,
             conversation,
             context: None,
+            chat_failed: Arc::default(),
             emit,
         }
     }
@@ -92,16 +97,26 @@ impl Pipeline {
             Ok(_) => self.link(Service::Llm, Ok(())),
             Err(e) => self.link(Service::Llm, Err(e)),
         }
+        self.learn_context().await;
+        self.report_context();
+    }
+
+    /// The context window's size: the setting's, else the server's.
+    async fn learn_context(&mut self) {
+        let s = &self.settings;
         self.context = match s.context_size {
             Some(n) => Some(n),
             None => llm::context_size(&self.c, &s.llm, &s.model).await,
         };
-        self.report_context();
     }
 
     pub async fn answer(&mut self, heard: &str) {
         (self.emit)(Event::Heard { text: heard.into() });
         self.conversation.messages.push(Message::new("user", heard));
+        // Asked again until known, in case the server was not up when Peabody started.
+        if self.context.is_none() {
+            self.learn_context().await;
+        }
         let mut compacted = false;
         let reply = loop {
             let req = self.conversation.request(&self.settings.system_prompt);
@@ -206,6 +221,9 @@ impl Pipeline {
     }
 
     fn link(&self, service: Service, r: Result<(), String>) {
+        if service == Service::Llm {
+            self.chat_failed.store(r.is_err(), Ordering::Relaxed);
+        }
         (self.emit)(link_event(service, r));
     }
 }
@@ -282,6 +300,7 @@ pub fn start(settings: Settings, conversation: PathBuf, emit: Emit, timing: Timi
     )));
 
     let mut pipeline = Pipeline::new(settings.clone(), conversation, emit.clone());
+    let chat_failed = pipeline.chat_failed.clone();
     tasks.push(tokio::spawn(async move {
         pipeline.connect().await;
         while let Some(heard) = rx.recv().await {
@@ -295,10 +314,12 @@ pub fn start(settings: Settings, conversation: PathBuf, emit: Emit, timing: Timi
                 Service::Phonorheos,
                 phonorheos::health(&c, &settings.phonorheos).await,
             ));
-            emit(link_event(
-                Service::Llm,
-                llm::models(&c, &settings.llm).await.map(|_| ()),
-            ));
+            // A server that lists its models may still refuse the chat; only a failure
+            // of the list, or a list after a chat that succeeded, is reported.
+            let listed = llm::models(&c, &settings.llm).await.map(|_| ());
+            if listed.is_err() || !chat_failed.load(Ordering::Relaxed) {
+                emit(link_event(Service::Llm, listed));
+            }
             tokio::time::sleep(timing.health).await;
         }
     }));

@@ -25,20 +25,22 @@ pub struct Event {
     pub data: String,
 }
 
-/// Cuts a byte stream into events; text that ends mid-event waits for the rest.
+/// Cuts a byte stream into events; bytes that end mid-line wait for the rest, so that a
+/// character split between two reads is decoded whole.
 #[derive(Default)]
 pub struct SseParser {
-    buf: String,
+    buf: Vec<u8>,
     current: Event,
     has_data: bool,
 }
 
 impl SseParser {
-    pub fn push(&mut self, chunk: &str) -> Vec<Event> {
-        self.buf.push_str(chunk);
+    pub fn push(&mut self, chunk: &[u8]) -> Vec<Event> {
+        self.buf.extend_from_slice(chunk);
         let mut out = Vec::new();
-        while let Some(n) = self.buf.find('\n') {
-            let line: String = self.buf.drain(..=n).collect();
+        while let Some(n) = self.buf.iter().position(|&b| b == b'\n') {
+            let bytes: Vec<u8> = self.buf.drain(..=n).collect();
+            let line = String::from_utf8_lossy(&bytes);
             let line = line.trim_end_matches(['\n', '\r']);
             if line.is_empty() {
                 if self.has_data {
@@ -101,6 +103,10 @@ pub enum Link {
     Down(String),
 }
 
+/// How long the stream may stay silent: graptostream sends a keep-alive every 15 s, so a
+/// longer silence means a connection that died without closing (a LAN link dropped).
+const IDLE: Duration = Duration::from_secs(45);
+
 /// Reads Peabody's utterances for ever, reconnecting after a failure (1 s, doubling to
 /// 30 s) and resuming from the last event seen.
 pub async fn read_utterances(
@@ -128,9 +134,12 @@ pub async fn read_utterances(
                 let mut parser = SseParser::default();
                 let mut body = r.bytes_stream();
                 let ended = loop {
-                    match body.next().await {
+                    let Ok(next) = tokio::time::timeout(IDLE, body.next()).await else {
+                        break "silent for 45 s".to_string();
+                    };
+                    match next {
                         Some(Ok(bytes)) => {
-                            for ev in parser.push(&String::from_utf8_lossy(&bytes)) {
+                            for ev in parser.push(&bytes) {
                                 if ev.id.is_some() {
                                     last_id.clone_from(&ev.id);
                                 }
@@ -246,8 +255,8 @@ mod tests {
     #[test]
     fn parses_events_split_across_chunks() {
         let mut p = SseParser::default();
-        assert!(p.push(": keep-alive\n\nid: 7\nevent: seg").is_empty());
-        let evs = p.push("ment\ndata: {\"a\":1}\r\n\r\nid: 8\ndata: x\ndata: y\n\n");
+        assert!(p.push(b": keep-alive\n\nid: 7\nevent: seg").is_empty());
+        let evs = p.push(b"ment\ndata: {\"a\":1}\r\n\r\nid: 8\ndata: x\ndata: y\n\n");
         assert_eq!(
             evs,
             vec![
@@ -263,6 +272,15 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn decodes_a_character_split_between_reads() {
+        let mut p = SseParser::default();
+        let line = "data: café\n\n".as_bytes();
+        let cut = line.iter().position(|&b| b == 0xC3).unwrap() + 1;
+        assert!(p.push(&line[..cut]).is_empty());
+        assert_eq!(p.push(&line[cut..])[0].data, "café");
     }
 
     #[test]
