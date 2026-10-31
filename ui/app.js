@@ -15,7 +15,7 @@ function el(tag, attrs, ...children) {
   return e;
 }
 
-const WHO = { heard: "You", holding: "Peabody", tool: "Tool", notice: "Note", cleared: "Cleared", replied: "Peabody", compacted: "Summary", error: "Problem" };
+const WHO = { heard: "Input", holding: "Peabody", tool: "Tool", notice: "Note", cleared: "Cleared", to_model: "To model", from_model: "From model", replied: "Peabody", compacted: "Summary", error: "Problem" };
 
 function lineText(l) {
   if (l.kind === "compacted") return "The conversation was summarised: " + l.summary;
@@ -26,8 +26,17 @@ function lineText(l) {
 function addLine(l) {
   const log = $("log");
   log.querySelector(".empty")?.remove();
-  const at = new Date(Number(l.at) * 1000).toLocaleTimeString();
-  log.append(el("li", { class: l.kind, title: at }, el("span", { class: "who" }, WHO[l.kind] || l.kind), el("span", { class: "text" }, lineText(l))));
+  const at = new Date(Number(l.at) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const label = el("span", { class: "who" }, el("span", { class: "at" }, at), WHO[l.kind] || l.kind);
+  let body;
+  if (l.kind === "to_model" || l.kind === "from_model") {
+    // The whole request or reply, collapsed to its summary until opened.
+    const pre = el("pre", {}, l.text);
+    body = el("details", { class: "text" }, el("summary", {}, l.summary), pre);
+  } else {
+    body = el("span", { class: "text" }, lineText(l));
+  }
+  log.append(el("li", { class: l.kind }, label, body));
   while (log.children.length > 200) log.firstElementChild.remove();
   window.scrollTo(0, document.body.scrollHeight);
 }

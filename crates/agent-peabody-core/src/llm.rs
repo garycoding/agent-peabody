@@ -35,6 +35,10 @@ pub struct Reply {
     /// The tools the model asks to have called before it answers, as the server gave
     /// them (`id`, and `function` with `name` and `arguments`); empty for an answer.
     pub tool_calls: Vec<Value>,
+    /// The model's reasoning, where the server returns it apart (`reasoning_content`).
+    pub reasoning: String,
+    /// The server's token counts, as it reported them.
+    pub usage: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -99,6 +103,12 @@ pub fn parse_reply(v: &Value) -> Reply {
             .as_array()
             .cloned()
             .unwrap_or_default(),
+        reasoning: message["reasoning_content"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        usage: u.clone(),
     }
 }
 
@@ -235,6 +245,8 @@ mod tests {
                 content: "Four.".into(),
                 total_tokens: Some(26),
                 tool_calls: vec![],
+                reasoning: "two and two".into(),
+                usage: json!({"prompt_tokens": 19, "completion_tokens": 7, "total_tokens": 26}),
             }
         );
         let v = json!({"choices": [{"message": {"content": "<think>hmm</think>\n\nFour."}}],
@@ -245,6 +257,8 @@ mod tests {
                 content: "Four.".into(),
                 total_tokens: Some(15),
                 tool_calls: vec![],
+                reasoning: String::new(),
+                usage: json!({"prompt_tokens": 10, "completion_tokens": 5}),
             }
         );
         let v = json!({"choices": [{"message": {"content": "<think>still thinking"}}]});
@@ -254,6 +268,8 @@ mod tests {
                 content: String::new(),
                 total_tokens: None,
                 tool_calls: vec![],
+                reasoning: String::new(),
+                usage: Value::Null,
             }
         );
         // The reasoning's tokens are not counted, as LM Studio reports them for Gemma.

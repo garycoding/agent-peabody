@@ -24,7 +24,7 @@ On Ubuntu, graptostream runs on a Mac and Peabody reaches it over the network.
 - **The context:** how full the model's context window is, as a percentage and a bar; pointing at it gives the tokens. The conversation is summarised on its own at 75%.
 - **Compact:** summarises all but the last four exchanges now, without waiting for 75%.
 - **Clear:** deletes the whole conversation; it asks for a second click within three seconds.
-- **The conversation:** what you said ("You"), the instant reply (in italics), each tool call, what Peabody answered, when the conversation was summarised or cleared, and any problem.
+- **The conversation:** each line labelled with its time: what Peabody heard ("Input"), the instant reply (in italics), each request to the model ("To model") and its reply ("From model"), each tool call, what Peabody answered, when the conversation was summarised or cleared, and any problem. A request or reply shows a one-line summary ("4 messages, 3 tools"; "answer, 3287 tokens"); click it to see the whole of it: every message sent, with the tools offered, or the reasoning, answer, tool calls and token counts received.
 - **Settings** opens the settings.
 
 ## Talking to Peabody

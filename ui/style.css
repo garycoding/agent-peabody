@@ -20,7 +20,8 @@ main { padding: 8px 20px 24px; }
 .conversation { list-style: none; margin: 0; padding: 0; }
 .conversation li { padding: 8px 0; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: baseline; }
 .conversation li:first-child { border-top: 0; }
-.conversation .who { width: 70px; flex: none; color: var(--muted); font-size: 12px; }
+.conversation .who { width: 92px; flex: none; color: var(--muted); font-size: 12px; display: flex; flex-direction: column; line-height: 1.3; }
+.conversation .who .at { font-variant-numeric: tabular-nums; font-size: 11px; opacity: .8; }
 .conversation .text { flex: 1; overflow-wrap: anywhere; white-space: pre-wrap; }
 .conversation .replied .text { color: var(--accent); }
 .conversation .holding .text { color: var(--accent); font-style: italic; }
@@ -58,3 +59,5 @@ button.confirm { border-color: var(--warn); color: var(--warn); }
 .server input.url { flex: 3; } .server input.token { flex: 2; } .server button { flex: none; }
 #add-server { margin-top: 8px; }
 .conversation .notice .text, .conversation .cleared .text { color: var(--muted); font-style: italic; }
+.conversation details.text summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.conversation details.text pre { margin: 6px 0 0; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; }

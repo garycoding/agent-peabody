@@ -73,6 +73,8 @@ Tools and controls, by the owner on 2026-10-31:
 - **D17 Several servers:** any number of MCP servers, each an address and an optional token; v0.4.0's single server is read as the first. A tool whose name an earlier server already offers is given the server's name in front. One status dot covers them all and names any that fail; the others are still used.
 - **D18 Controls:** an On/Off button (off: no listen request, nothing heard; kept across restarts), Clear (the whole conversation, after a second click) and Compact (a summary now, keeping the last four exchanges), and the context window's fullness as a percentage with a bar.
 
+- **D19 Model traffic shown:** every request to the model and every reply is a line in the window, collapsed to a summary and opened by a click, so that what the model was given and what it returned can be checked (asked for after the tool tests, 2026-10-31). Each line's label carries its time; the speaker's label is "Input", not "You".
+
 Made during the build, within these rulings:
 
 - The tokens counted towards the window exclude the reasoning's, since the reasoning is not kept; counting them would summarise far too soon (found in the live test).
