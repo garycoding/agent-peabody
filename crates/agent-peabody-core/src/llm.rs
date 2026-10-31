@@ -102,11 +102,17 @@ pub async fn chat(
     c: &reqwest::Client,
     ep: &Endpoint,
     model: &str,
+    think: bool,
     messages: &[Message],
 ) -> Result<Reply, Error> {
     let mut body = json!({ "messages": messages, "stream": false });
     if !model.is_empty() {
         body["model"] = json!(model);
+    }
+    // LM Studio skips a reasoning model's thinking for "none"; "low" and the chat
+    // template's enable_thinking made no difference there (Gemma 4, 2026-10-31).
+    if !think {
+        body["reasoning_effort"] = json!("none");
     }
     let r = http::request(c, Method::POST, ep, "/v1/chat/completions")
         .timeout(ANSWER_TIMEOUT)

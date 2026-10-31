@@ -44,3 +44,4 @@ small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 .row.end { justify-content: flex-end; }
 .error { color: var(--warn); min-height: 1em; margin: 6px 0 0; }
 .about { color: var(--muted); font-size: 12px; padding: 0 20px 16px; }
+label.check input { width: auto; margin: 0 6px 0 0; vertical-align: middle; }

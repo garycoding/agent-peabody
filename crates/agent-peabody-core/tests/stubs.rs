@@ -439,3 +439,28 @@ async fn prepares_its_instant_replies_and_says_one_before_each_answer() {
         ]
     );
 }
+
+#[tokio::test]
+async fn asks_the_model_not_to_think_unless_the_setting_allows_it() {
+    let (model, voice) = (Model::default(), Voice::default());
+    model
+        .replies
+        .lock()
+        .unwrap()
+        .extend([reply("Four.", 60), reply("Seven.", 80)]);
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, _) = collect();
+    let s = settings(&model, &voice).await;
+    assert!(!s.thinking, "thinking is off by default");
+    let mut p = Pipeline::new(s.clone(), dir.path().join("c.json"), emit.clone());
+    p.answer("what is two plus two?").await;
+    let thinking = Settings {
+        thinking: true,
+        ..s
+    };
+    let mut p = Pipeline::new(thinking, dir.path().join("d.json"), emit);
+    p.answer("and three more?").await;
+    let requests = model.requests.lock().unwrap();
+    assert_eq!(requests[0]["reasoning_effort"], "none");
+    assert!(requests[1].get("reasoning_effort").is_none());
+}
