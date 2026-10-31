@@ -15,7 +15,7 @@ function el(tag, attrs, ...children) {
   return e;
 }
 
-const WHO = { heard: "You", holding: "Peabody", replied: "Peabody", compacted: "Summary", error: "Problem" };
+const WHO = { heard: "You", holding: "Peabody", tool: "Tool", replied: "Peabody", compacted: "Summary", error: "Problem" };
 
 function lineText(l) {
   if (l.kind === "compacted") return "The conversation was summarised to fit the context window: " + l.summary;
@@ -53,7 +53,8 @@ async function load() {
   state = await invoke("state");
   $("log").replaceChildren(el("li", { class: "empty" }, "Say “Peabody,” then what you want to ask."));
   for (const l of state.log) addLine(l);
-  for (const s of ["graptostream", "llm", "phonorheos"]) showLink(s, state.links[s]);
+  $("link-tools").hidden = !state.settings.tools?.url;
+  for (const s of ["graptostream", "llm", "phonorheos", "tools"]) showLink(s, state.links[s]);
   showContext();
   $("about").textContent = `Peabody ${state.version} · data in ${state.data}`;
   const voice = $("voice");

@@ -4,7 +4,9 @@
 //! Peabody against small stand-ins for graptostream, the model server and phonorheos.
 
 use agent_peabody_core::graptostream::{self, Link, Listen};
-use agent_peabody_core::pipeline::{self, Emit, Event, NO_ANSWER, NO_MODEL, Pipeline, Timing};
+use agent_peabody_core::pipeline::{
+    self, Emit, Event, MAX_TOOL_ROUNDS, NO_ANSWER, NO_MODEL, Pipeline, Timing,
+};
 use agent_peabody_core::settings::{Endpoint, Settings};
 use axum::Router;
 use axum::extract::{Path, State};
@@ -463,4 +465,153 @@ async fn asks_the_model_not_to_think_unless_the_setting_allows_it() {
     let requests = model.requests.lock().unwrap();
     assert_eq!(requests[0]["reasoning_effort"], "none");
     assert!(requests[1].get("reasoning_effort").is_none());
+}
+
+/// A model reply asking for one tool call.
+fn tool_call(name: &str, arguments: Value) -> (StatusCode, Value) {
+    (
+        StatusCode::OK,
+        json!({"choices": [{"finish_reason": "tool_calls", "message": {"content": "",
+            "tool_calls": [{"type": "function", "id": "c1",
+                "function": {"name": name, "arguments": arguments.to_string()}}]}}],
+            "usage": {"total_tokens": 90}}),
+    )
+}
+
+/// An MCP server with one tool, `search`, answering as an event stream after a session
+/// is opened; it keeps the calls.
+#[derive(Clone, Default)]
+struct Tools {
+    calls: Arc<Mutex<Vec<Value>>>,
+}
+
+fn tools_app(t: Tools) -> Router {
+    Router::new()
+        .route(
+            "/mcp",
+            post(
+                |State(t): State<Tools>, headers: HeaderMap, axum::Json(body): axum::Json<Value>| async move {
+                    let id = body["id"].clone();
+                    let result = match body["method"].as_str() {
+                        Some("initialize") => json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+                                                     "serverInfo": {"name": "stub", "version": "0"}}),
+                        Some("tools/list") => {
+                            assert_eq!(headers.get("mcp-session-id").unwrap(), "s1");
+                            json!({"tools": [{"name": "search", "description": "Web search",
+                                "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}}}]})
+                        }
+                        Some("tools/call") => {
+                            t.calls.lock().unwrap().push(body["params"].clone());
+                            json!({"content": [{"type": "text", "text": "It is 1:20 pm in California."}]})
+                        }
+                        _ => return (StatusCode::ACCEPTED, [("mcp-session-id", "s1")], String::new()),
+                    };
+                    let msg = json!({"jsonrpc": "2.0", "id": id, "result": result});
+                    (StatusCode::OK, [("mcp-session-id", "s1")], format!("event: message\ndata: {msg}\n\n"))
+                },
+            ),
+        )
+        .with_state(t)
+}
+
+#[tokio::test]
+async fn calls_the_tools_the_model_asks_for_and_keeps_only_the_answer() {
+    let (model, voice, tools) = (Model::default(), Voice::default(), Tools::default());
+    model.replies.lock().unwrap().extend([
+        tool_call("search", json!({"query": "time in California"})),
+        reply("It is twenty past one.", 120),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, events) = collect();
+    let mut s = settings(&model, &voice).await;
+    s.tools = Endpoint::new(&format!(
+        "{}/mcp",
+        serve(tools_app(tools.clone())).await.url
+    ));
+    let mut p = Pipeline::new(s, dir.path().join("c.json"), emit);
+    p.answer("what time is it in California?").await;
+    assert_eq!(
+        voice.said.lock().unwrap()[0]["text"],
+        "It is twenty past one."
+    );
+    assert_eq!(
+        tools.calls.lock().unwrap()[0],
+        json!({"name": "search", "arguments": {"query": "time in California"}})
+    );
+    let requests = model.requests.lock().unwrap();
+    assert_eq!(requests[0]["tools"][0]["function"]["name"], "search");
+    // The second request carries the call and its result.
+    let second = requests[1]["messages"].as_array().unwrap();
+    let last = second.last().unwrap();
+    assert_eq!(
+        (last["role"].as_str(), last["tool_call_id"].as_str()),
+        (Some("tool"), Some("c1"))
+    );
+    assert_eq!(last["content"], "It is 1:20 pm in California.");
+    assert_eq!(second[second.len() - 2]["tool_calls"][0]["id"], "c1");
+    // The conversation keeps the question and the answer only.
+    let kept: Vec<&str> = p
+        .conversation
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(
+        kept,
+        ["what time is it in California?", "It is twenty past one."]
+    );
+    assert!(events.lock().unwrap().contains(&Event::Tool {
+        text: "search: time in California".into()
+    }));
+}
+
+#[tokio::test]
+async fn stops_offering_tools_after_the_last_round() {
+    let (model, voice, tools) = (Model::default(), Voice::default(), Tools::default());
+    let asks = (0..MAX_TOOL_ROUNDS).map(|_| tool_call("search", json!({"query": "again"})));
+    model.replies.lock().unwrap().extend(asks);
+    model.replies.lock().unwrap().push(reply("Enough.", 100));
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, _) = collect();
+    let mut s = settings(&model, &voice).await;
+    s.tools = Endpoint::new(&format!(
+        "{}/mcp",
+        serve(tools_app(tools.clone())).await.url
+    ));
+    let mut p = Pipeline::new(s, dir.path().join("c.json"), emit);
+    p.answer("loop?").await;
+    let requests = model.requests.lock().unwrap();
+    assert_eq!(requests.len(), MAX_TOOL_ROUNDS + 1);
+    assert!(
+        requests[MAX_TOOL_ROUNDS].get("tools").is_none(),
+        "the last request offers none"
+    );
+    assert_eq!(tools.calls.lock().unwrap().len(), MAX_TOOL_ROUNDS);
+    assert_eq!(voice.said.lock().unwrap()[0]["text"], "Enough.");
+}
+
+#[tokio::test]
+async fn answers_without_tools_when_the_mcp_server_cannot_be_reached() {
+    let (model, voice) = (Model::default(), Voice::default());
+    model
+        .replies
+        .lock()
+        .unwrap()
+        .push(reply("Without tools.", 50));
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, events) = collect();
+    let mut s = settings(&model, &voice).await;
+    s.tools = Endpoint::new("http://127.0.0.1:9/mcp");
+    let mut p = Pipeline::new(s, dir.path().join("c.json"), emit);
+    p.answer("hello?").await;
+    assert!(model.requests.lock().unwrap()[0].get("tools").is_none());
+    assert_eq!(voice.said.lock().unwrap()[0]["text"], "Without tools.");
+    assert!(events.lock().unwrap().iter().any(|e| matches!(
+        e,
+        Event::Link {
+            service: pipeline::Service::Tools,
+            ok: false,
+            ..
+        }
+    )));
 }

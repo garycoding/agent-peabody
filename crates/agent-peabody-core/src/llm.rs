@@ -32,6 +32,9 @@ pub struct Reply {
     /// The tokens the request and the kept answer take together, where the server reports
     /// them: the reasoning's tokens are not counted, since the reasoning is not kept.
     pub total_tokens: Option<u32>,
+    /// The tools the model asks to have called before it answers, as the server gave
+    /// them (`id`, and `function` with `name` and `arguments`); empty for an answer.
+    pub tool_calls: Vec<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,7 +83,8 @@ fn strip_thinking(s: &str) -> &str {
 }
 
 pub fn parse_reply(v: &Value) -> Reply {
-    let content = v["choices"][0]["message"]["content"].as_str().unwrap_or("");
+    let message = &v["choices"][0]["message"];
+    let content = message["content"].as_str().unwrap_or("");
     let u = &v["usage"];
     let reasoning = u["completion_tokens_details"]["reasoning_tokens"]
         .as_u64()
@@ -91,6 +95,10 @@ pub fn parse_reply(v: &Value) -> Reply {
             .as_u64()
             .or_else(|| Some(u["prompt_tokens"].as_u64()? + u["completion_tokens"].as_u64()?))
             .map(|n| n.saturating_sub(reasoning) as u32),
+        tool_calls: message["tool_calls"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
     }
 }
 
@@ -103,11 +111,15 @@ pub async fn chat(
     ep: &Endpoint,
     model: &str,
     think: bool,
-    messages: &[Message],
+    messages: &impl Serialize,
+    tools: &[Value],
 ) -> Result<Reply, Error> {
     let mut body = json!({ "messages": messages, "stream": false });
     if !model.is_empty() {
         body["model"] = json!(model);
+    }
+    if !tools.is_empty() {
+        body["tools"] = json!(tools);
     }
     // LM Studio skips a reasoning model's thinking for "none"; "low" and the chat
     // template's enable_thinking made no difference there (Gemma 4, 2026-10-31).
@@ -221,7 +233,8 @@ mod tests {
             parse_reply(&v),
             Reply {
                 content: "Four.".into(),
-                total_tokens: Some(26)
+                total_tokens: Some(26),
+                tool_calls: vec![],
             }
         );
         let v = json!({"choices": [{"message": {"content": "<think>hmm</think>\n\nFour."}}],
@@ -230,7 +243,8 @@ mod tests {
             parse_reply(&v),
             Reply {
                 content: "Four.".into(),
-                total_tokens: Some(15)
+                total_tokens: Some(15),
+                tool_calls: vec![],
             }
         );
         let v = json!({"choices": [{"message": {"content": "<think>still thinking"}}]});
@@ -238,7 +252,8 @@ mod tests {
             parse_reply(&v),
             Reply {
                 content: String::new(),
-                total_tokens: None
+                total_tokens: None,
+                tool_calls: vec![],
             }
         );
         // The reasoning's tokens are not counted, as LM Studio reports them for Gemma.

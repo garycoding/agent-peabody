@@ -60,6 +60,9 @@ pub struct Settings {
     /// The context window's size in tokens, where the server does not report it or the
     /// owner overrides what it reports.
     pub context_size: Option<u32>,
+    /// An MCP server (Streamable HTTP) whose tools the model is offered, such as
+    /// aqua-roaming's web search at `http://trixie.local:35830/mcp`; none where empty.
+    pub tools: Endpoint,
     /// Whether a reasoning model may think before it answers; off by default, since the
     /// thinking made a one-sentence answer take 19.9 s instead of 2.1 s on pacific.
     pub thinking: bool,
@@ -79,6 +82,7 @@ impl Default for Settings {
             llm: Endpoint::default(),
             model: String::new(),
             context_size: None,
+            tools: Endpoint::default(),
             thinking: false,
             instant_replies: DEFAULT_INSTANT_REPLIES.map(String::from).to_vec(),
         }
