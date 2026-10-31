@@ -1,0 +1,68 @@
+<!-- SPDX-FileCopyrightText: 2026 Gary Frattarola <garyf@parkviewlab.ai> -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Peabody</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <strong>Peabody</strong>
+    <span class="links">
+      <span class="link" id="link-graptostream"><span class="dot"></span>graptostream</span>
+      <span class="link" id="link-llm"><span class="dot"></span>model</span>
+      <span class="link" id="link-phonorheos"><span class="dot"></span>phonorheos</span>
+    </span>
+    <span class="grow"></span>
+    <span class="meta" id="context"></span>
+    <button id="open-settings">Settings</button>
+  </header>
+  <p class="banner" id="problems" hidden></p>
+  <main>
+    <ul class="conversation" id="log"><li class="empty">Say “Peabody,” then what you want to ask.</li></ul>
+  </main>
+
+  <dialog id="settings">
+    <form id="form" method="dialog">
+      <h2>Settings</h2>
+      <fieldset>
+        <legend>Peabody</legend>
+        <label>Name <input name="name" required>
+          <small>The app name graptostream addresses Peabody's utterances to; map a spoken name to it in graptostream's Spoken names.</small></label>
+        <label>Voice <select name="voice" id="voice"></select></label>
+        <label>System prompt <textarea name="system_prompt" rows="3"></textarea></label>
+      </fieldset>
+      <fieldset>
+        <legend>graptostream</legend>
+        <label>Address <input name="graptostream.url" placeholder="http://127.0.0.1:35860" required></label>
+        <label>Token <input name="graptostream.token" type="password" autocomplete="off" placeholder="Only over the LAN"></label>
+      </fieldset>
+      <fieldset>
+        <legend>phonorheos</legend>
+        <label>Address <input name="phonorheos.url" placeholder="http://127.0.0.1:35861" required></label>
+        <label>Token <input name="phonorheos.token" type="password" autocomplete="off" placeholder="Only over the LAN"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Model server (llama.cpp or LM Studio)</legend>
+        <label>Address <input name="llm.url" placeholder="http://chimchim.local:8080" required></label>
+        <label>Token <input name="llm.token" type="password" autocomplete="off" placeholder="If the server needs one"></label>
+        <label>Model
+          <span class="row"><input name="model" list="models" placeholder="As the server names it"><button type="button" id="fetch-models">List models</button></span>
+          <datalist id="models"></datalist>
+          <small id="models-note"></small></label>
+        <label>Context size <input name="context_size" type="number" min="512" step="1" placeholder="As the server reports it">
+          <small id="context-note">Leave empty to use the size the server reports.</small></label>
+      </fieldset>
+      <p class="error" id="form-error"></p>
+      <div class="row end">
+        <button type="button" id="cancel">Cancel</button>
+        <button type="submit" id="save" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <footer class="about" id="about"></footer>
+  <script src="app.js"></script>
+</body>
+</html>

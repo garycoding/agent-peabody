@@ -1,0 +1,243 @@
+# SPDX-FileCopyrightText: 2026 Gary Frattarola <garyf@parkviewlab.ai>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Release
+
+# Assembled from the ParkviewLab handbook's release parts, one for each of this
+# repository's publish targets: the gate, then the job of each target, then the
+# job that creates the GitHub Release. The recipe is in the handbook's ci.md. The
+# installers are built by scripts/build-app (Tauri), not electron-builder; each job
+# keeps the part's contract: it uploads `installers-<os>`, which the changelog job
+# attaches to the Release.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0          # full history + all tags: the ancestor and monotonic checks below
+
+      # The repository's one version file, read in `git bump`'s order.
+      - name: Verify tag matches the version file
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          if [ -f pyproject.toml ]; then
+            FILE=pyproject.toml
+            VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          elif [ -f package.json ]; then
+            FILE=package.json
+            VERSION=$(jq -r .version package.json)
+          elif [ -f VERSION.txt ]; then
+            FILE=VERSION.txt
+            VERSION=$(tr -d '[:space:]' < VERSION.txt)
+          else
+            echo "no version file: expected pyproject.toml, package.json or VERSION.txt"
+            exit 1
+          fi
+          # A dev version is never released: the promotion carries develop's
+          # placeholder onto main, and `git bump release` drops it before the tag.
+          case "$VERSION" in
+            *.dev[0-9]*|*-dev[0-9]*)
+              echo "::error::$FILE version '$VERSION' is a dev version; finalize the cycle with git bump release before tagging"; exit 1 ;;
+          esac
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "tag $TAG != $FILE $VERSION"
+            exit 1
+          fi
+
+      - name: Verify tag is reachable from origin/main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "tagged commit $GITHUB_SHA is not on origin/main"
+            echo "release tags must come from main — back-merge through, then re-tag from main"
+            exit 1
+          fi
+
+      - name: Verify version is greater than the previous release tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          PREV=$(git tag --list 'v*' | grep -vxF "$TAG" | sort -V | tail -n 1 || true)
+          if [ -z "$PREV" ]; then
+            echo "no previous v* tag — first release, nothing to compare"
+            exit 0
+          fi
+          if [ "$(printf '%s\n' "$PREV" "$TAG" | sort -V | tail -n 1)" != "$TAG" ]; then
+            echo "tag $TAG is not greater than the previous release tag $PREV"
+            echo "versions only ever increase — bump past $PREV, then re-tag from main"
+            exit 1
+          fi
+
+  # The macOS installer, for Apple Silicon: the app in a disk image. Where the five
+  # Apple secrets are present it is signed with a Developer ID, notarised and
+  # stapled; until then (v0.1.0 was released unsigned by the owner's ruling) the app
+  # is signed ad hoc and the job says so.
+  installers-macos:
+    needs: gate
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Import the Developer ID certificate into a temporary keychain
+        id: signing
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY_B64 }}
+        run: |
+          set -e
+          if [ -z "$CSC_LINK" ] || [ -z "$APPLE_API_KEY_B64" ]; then
+            echo "::warning::the signing secrets are not set: the app is signed ad hoc and not notarised"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          P12="$RUNNER_TEMP/cert.p12"
+          case "$CSC_LINK" in
+            http*) curl -fsSL "$CSC_LINK" -o "$P12" ;;
+            *) printf '%s' "$CSC_LINK" | base64 --decode > "$P12" ;;
+          esac
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KCPASS=$(uuidgen)
+          security create-keychain -p "$KCPASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPASS" "$KC"
+          security import "$P12" -k "$KC" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPASS" "$KC" > /dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm -f "$P12"
+          IDENTITY=$(security find-identity -v -p codesigning "$KC" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)
+          if [ -z "$IDENTITY" ]; then echo "::error::no Developer ID Application identity in the certificate"; exit 1; fi
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          printf '%s' "$APPLE_API_KEY_B64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Tauri
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Build the app and its disk image
+        run: scripts/build-app
+      - name: Notarise and staple
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: scripts/notarize
+      - uses: actions/upload-artifact@v6
+        with:
+          name: installers-macos
+          if-no-files-found: error
+          path: dist/*.dmg
+
+  # The Linux installers, for x86_64: a .deb and an AppImage, built on Ubuntu 24.04 so
+  # that they also run on later releases (the target is Ubuntu Desktop 26.04).
+  installers-linux:
+    needs: gate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: System libraries for Tauri and the AppImage
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf file libfuse2t64
+      - name: Tauri
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Build the .deb and the AppImage
+        run: scripts/build-app
+      - uses: actions/upload-artifact@v6
+        with:
+          name: installers-linux
+          if-no-files-found: error
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+
+  changelog:
+    needs: [gate, installers-macos, installers-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # scoped here — only this job commits CHANGELOG.md back to main
+      pull-requests: read   # the merged pull requests the list is built from
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0          # every branch and tag: the rule searches them all
+          # default ref = the tag, which is what we want for `--mode=generate`
+
+      # The changelog script: dev-tools at a release pinned by its commit SHA,
+      # the tag in the comment (the handbook's ci.md, "Shared dev scripts").
+      - uses: actions/checkout@v6
+        with:
+          repository: ParkviewLab/dev-tools
+          ref: d774e44c5fb289277481d28592456879cf8d01ed # v1.5.1
+          path: dev-tools
+
+      # Installers target only: omit this step where the release builds none.
+      - name: Download all built installers
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Generate release-body.md (LLM call happens here)
+        env:
+          # A repository secret where it is set; without it the script writes a
+          # placeholder paragraph and the release still ships.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # reads the merged pull requests
+          GITHUB_REF: ${{ github.ref }}
+        # `uv run --script` installs the exact anthropic SDK the script declares,
+        # for just this invocation, without touching the project's dependencies.
+        # --reuse-committed takes a section already on main, so a re-run after a
+        # partial failure makes no second model call.
+        run: uv run --script dev-tools/scripts/generate-changelog --mode=generate --reuse-committed
+
+      - name: Switch to fresh origin/main and insert into CHANGELOG.md
+        run: |
+          # Stash the just-generated release body so it survives the checkout.
+          cp release-body.md /tmp/release-body.md
+          git fetch origin main
+          git checkout origin/main
+          mv /tmp/release-body.md release-body.md
+          # Re-runs only the file-manipulation half, so it makes no model call.
+          # `uv run --script` still installs the SDK the script declares, unused here.
+          uv run --script dev-tools/scripts/generate-changelog --mode=insert
+
+      - name: Commit CHANGELOG.md back to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "no changelog change to commit"
+            exit 0
+          fi
+          TAG="${GITHUB_REF#refs/tags/}"
+          # [skip ci] guards against any future non-tag-triggered workflows;
+          # this release workflow only fires on `push: tags` so isn't at risk
+          # of recursing, but the marker is cheap insurance.
+          git commit -m "docs(changelog): $TAG [skip ci]"
+          git push origin HEAD:main
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          shopt -s globstar nullglob
+          files=()                                  # regular files only — the
+          for f in artifacts/**/*; do               # per-OS dirs are not assets
+            [[ -f "$f" ]] && files+=("$f")
+          done
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-body.md \
+            --target main \
+            "${files[@]}"
