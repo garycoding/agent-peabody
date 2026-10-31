@@ -23,6 +23,7 @@ main { padding: 8px 20px 24px; }
 .conversation .who { width: 70px; flex: none; color: var(--muted); font-size: 12px; }
 .conversation .text { flex: 1; overflow-wrap: anywhere; white-space: pre-wrap; }
 .conversation .replied .text { color: var(--accent); }
+.conversation .holding .text { color: var(--accent); font-style: italic; }
 .conversation .compacted .text, .empty { color: var(--muted); font-style: italic; }
 .conversation .error .text { color: var(--warn); }
 .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }

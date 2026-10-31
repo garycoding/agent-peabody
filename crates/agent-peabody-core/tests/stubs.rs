@@ -180,6 +180,8 @@ async fn settings(model: &Model, voice: &Voice) -> Settings {
         phonorheos: serve(voice_app(voice.clone())).await,
         model: "m".into(),
         voice: "bf_emma".into(),
+        // Off unless a test is about them, so that what is said is only the answers.
+        instant_replies: Vec::new(),
         ..Settings::default()
     }
 }
@@ -255,7 +257,7 @@ async fn answers_in_its_voice_and_keeps_the_conversation() {
     let said = voice.said.lock().unwrap();
     assert_eq!(
         said[0],
-        json!({"text": "Four.", "client": "peabody", "voice": "bf_emma"})
+        json!({"text": "Four.", "client": "peabody", "voice": "bf_emma", "speak": true, "cache": false})
     );
     assert_eq!(said[1]["text"], "Seven.");
     // The second request carries the first exchange, and no reasoning.
@@ -379,4 +381,61 @@ async fn runs_from_hearing_to_speaking() {
         text: "what is two plus two?".into()
     }));
     assert!(g.listens.lock().unwrap().contains(&"DELETE r1".to_string()));
+}
+
+#[tokio::test]
+async fn prepares_its_instant_replies_and_says_one_before_each_answer() {
+    let (model, voice) = (Model::default(), Voice::default());
+    model
+        .replies
+        .lock()
+        .unwrap()
+        .extend([reply("Four.", 60), reply("Seven.", 80)]);
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, events) = collect();
+    let s = Settings {
+        instant_replies: vec!["Thinking...".into(), "One moment please...".into()],
+        ..settings(&model, &voice).await
+    };
+    let mut p = Pipeline::new(s, dir.path().join("c.json"), emit);
+    p.connect().await;
+    p.answer("what is two plus two?").await;
+    p.answer("and three more?").await;
+    let said = voice.said.lock().unwrap();
+    let prepare = |t: &str| json!({"text": t, "client": "peabody", "voice": "bf_emma", "speak": false, "cache": true});
+    assert_eq!(said[0], prepare("Thinking..."));
+    assert_eq!(said[1], prepare("One moment please..."));
+    // Each answer is preceded by an instant reply, spoken and kept; never the same twice.
+    let (first, second) = (&said[2], &said[4]);
+    for instant in [first, second] {
+        assert_eq!(
+            (instant["speak"].as_bool(), instant["cache"].as_bool()),
+            (Some(true), Some(true))
+        );
+    }
+    assert_ne!(first["text"], second["text"]);
+    assert_eq!(
+        (said[3]["text"].as_str(), said[5]["text"].as_str()),
+        (Some("Four."), Some("Seven."))
+    );
+    assert_eq!(said.len(), 6);
+    // The instant reply is shown, but the model never sees it.
+    assert!(events.lock().unwrap().contains(&Event::Holding {
+        text: first["text"].as_str().unwrap().into()
+    }));
+    let texts: Vec<String> = p
+        .conversation
+        .messages
+        .iter()
+        .map(|m| m.content.clone())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "what is two plus two?",
+            "Four.",
+            "and three more?",
+            "Seven."
+        ]
+    );
 }

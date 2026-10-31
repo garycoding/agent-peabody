@@ -8,6 +8,7 @@
 use crate::conversation::Conversation;
 use crate::graptostream::{self, Link, Listen};
 use crate::llm::{self, Message};
+use crate::phonorheos::Say;
 use crate::settings::Settings;
 use crate::{http, phonorheos};
 use serde::Serialize;
@@ -49,6 +50,10 @@ pub enum Event {
     Heard {
         text: String,
     },
+    /// The instant reply said while the model is asked.
+    Holding {
+        text: String,
+    },
     Replied {
         text: String,
     },
@@ -73,6 +78,8 @@ pub struct Pipeline {
     /// Whether the last chat request failed, so that the health check, which only asks
     /// for the model list, does not show the model server as answering.
     pub chat_failed: Arc<AtomicBool>,
+    /// The instant reply said last, which is not said next.
+    last_instant: Option<usize>,
     emit: Emit,
 }
 
@@ -86,6 +93,7 @@ impl Pipeline {
             conversation,
             context: None,
             chat_failed: Arc::default(),
+            last_instant: None,
             emit,
         }
     }
@@ -99,6 +107,48 @@ impl Pipeline {
         }
         self.learn_context().await;
         self.report_context();
+        self.prepare_instant_replies().await;
+    }
+
+    /// Asks phonorheos to make and keep the instant replies' speech, unheard.
+    async fn prepare_instant_replies(&self) {
+        for text in &self.settings.instant_replies {
+            let r = phonorheos::speak(
+                &self.c,
+                &self.settings.phonorheos,
+                text,
+                &self.settings.voice,
+                Say::PREPARE,
+            )
+            .await;
+            if r.is_err() {
+                self.link(Service::Phonorheos, r);
+                return;
+            }
+        }
+    }
+
+    /// Says one instant reply, chosen at random but never the one said last.
+    async fn say_instant_reply(&mut self) {
+        let Some(i) = pick(
+            self.settings.instant_replies.len(),
+            self.last_instant,
+            seed(),
+        ) else {
+            return;
+        };
+        self.last_instant = Some(i);
+        let text = self.settings.instant_replies[i].clone();
+        (self.emit)(Event::Holding { text: text.clone() });
+        let r = phonorheos::speak(
+            &self.c,
+            &self.settings.phonorheos,
+            &text,
+            &self.settings.voice,
+            Say::INSTANT,
+        )
+        .await;
+        self.link(Service::Phonorheos, r);
     }
 
     /// The context window's size: the setting's, else the server's.
@@ -112,6 +162,7 @@ impl Pipeline {
 
     pub async fn answer(&mut self, heard: &str) {
         (self.emit)(Event::Heard { text: heard.into() });
+        self.say_instant_reply().await;
         self.conversation.messages.push(Message::new("user", heard));
         // Asked again until known, in case the server was not up when Peabody started.
         if self.context.is_none() {
@@ -166,6 +217,7 @@ impl Pipeline {
             &self.settings.phonorheos,
             &spoken,
             &self.settings.voice,
+            Say::ANSWER,
         )
         .await;
         self.link(Service::Phonorheos, said);
@@ -226,6 +278,29 @@ impl Pipeline {
         }
         (self.emit)(link_event(service, r));
     }
+}
+
+/// The index of the instant reply to say among `n`, never `last` when there is another
+/// to choose; `seed` is any random number.
+fn pick(n: usize, last: Option<usize>, seed: u64) -> Option<usize> {
+    match (n, last) {
+        (0, _) => None,
+        (1, _) => Some(0),
+        (n, Some(l)) if l < n => {
+            let i = (seed % (n as u64 - 1)) as usize;
+            Some(if i >= l { i + 1 } else { i })
+        }
+        (n, _) => Some((seed % n as u64) as usize),
+    }
+}
+
+/// A random number from the standard library's randomly keyed hasher, which serves for
+/// choosing a phrase without a dependency for it.
+fn seed() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish()
 }
 
 fn link_event(service: Service, r: Result<(), String>) -> Event {
@@ -324,4 +399,30 @@ pub fn start(settings: Settings, conversation: PathBuf, emit: Emit, timing: Timi
         }
     }));
     Running { tasks, listen }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick;
+
+    #[test]
+    fn an_instant_reply_is_never_the_one_said_last() {
+        assert_eq!(pick(0, None, 7), None);
+        assert_eq!(
+            pick(1, Some(0), 7),
+            Some(0),
+            "with one phrase it is said each time"
+        );
+        for seed in 0..100 {
+            for last in 0..4 {
+                let i = pick(4, Some(last), seed).unwrap();
+                assert!(i < 4 && i != last);
+            }
+            assert!(pick(4, None, seed).unwrap() < 4);
+        }
+        // Every other phrase can be chosen.
+        let chosen: std::collections::BTreeSet<_> =
+            (0..100).map(|s| pick(4, Some(2), s).unwrap()).collect();
+        assert_eq!(chosen.into_iter().collect::<Vec<_>>(), [0, 1, 3]);
+    }
 }
