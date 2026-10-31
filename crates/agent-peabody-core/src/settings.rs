@@ -60,9 +60,13 @@ pub struct Settings {
     /// The context window's size in tokens, where the server does not report it or the
     /// owner overrides what it reports.
     pub context_size: Option<u32>,
-    /// An MCP server (Streamable HTTP) whose tools the model is offered, such as
-    /// aqua-roaming's web search at `http://trixie.local:35830/mcp`; none where empty.
-    pub tools: Endpoint,
+    /// MCP servers (Streamable HTTP) whose tools the model is offered, such as
+    /// aqua-roaming's web search at `http://trixie.local:35830/mcp`. Read also from v0.4.0's
+    /// single server.
+    #[serde(deserialize_with = "servers")]
+    pub tools: Vec<Endpoint>,
+    /// Whether Peabody listens and answers; off, it holds no listen request.
+    pub enabled: bool,
     /// Whether a reasoning model may think before it answers; off by default, since the
     /// thinking made a one-sentence answer take 19.9 s instead of 2.1 s on pacific.
     pub thinking: bool,
@@ -82,11 +86,28 @@ impl Default for Settings {
             llm: Endpoint::default(),
             model: String::new(),
             context_size: None,
-            tools: Endpoint::default(),
+            tools: Vec::new(),
+            enabled: true,
             thinking: false,
             instant_replies: DEFAULT_INSTANT_REPLIES.map(String::from).to_vec(),
         }
     }
+}
+
+/// The MCP servers, as a list or as v0.4.0's single server (dropped where it has no
+/// address).
+fn servers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Endpoint>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Servers {
+        List(Vec<Endpoint>),
+        One(Endpoint),
+    }
+    Ok(match Servers::deserialize(d)? {
+        Servers::List(l) => l,
+        Servers::One(e) if e.url.trim().is_empty() => Vec::new(),
+        Servers::One(e) => vec![e],
+    })
 }
 
 impl Settings {
@@ -127,6 +148,16 @@ mod tests {
         };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
+        // v0.4.0 kept one tools server, which becomes the first of the list.
+        std::fs::write(
+            &path,
+            r#"{"tools": {"url": "http://trixie.local:35830/mcp", "token": ""}, "model": "m"}"#,
+        )
+        .unwrap();
+        let old = Settings::load(&path);
+        assert_eq!(old.model, "m", "the rest of the settings are kept");
+        assert_eq!(old.tools, [Endpoint::new("http://trixie.local:35830/mcp")]);
+        assert!(old.enabled);
         assert_eq!(
             s.llm.at("/v1/models"),
             "http://pacific.local:1234/v1/models"

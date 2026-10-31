@@ -9,6 +9,7 @@
 </head>
 <body>
   <header>
+    <button id="power" class="power" title="Switch Peabody off: it stops listening and answering">On</button>
     <strong>Peabody</strong>
     <span class="links">
       <span class="link" id="link-graptostream"><span class="dot"></span>graptostream</span>
@@ -17,7 +18,9 @@
       <span class="link" id="link-tools" hidden><span class="dot"></span>tools</span>
     </span>
     <span class="grow"></span>
-    <span class="meta" id="context"></span>
+    <span class="context" id="context-box"><span class="gauge"><span class="fill" id="context-fill"></span></span><span class="meta" id="context"></span></span>
+    <button id="compact" title="Summarise all but the last four exchanges now">Compact</button>
+    <button id="clear" title="Delete the whole conversation">Clear</button>
     <button id="open-settings">Settings</button>
   </header>
   <p class="banner" id="problems" hidden></p>
@@ -61,10 +64,10 @@
           <small>A reasoning model answers better on hard questions when it may think first, but takes far longer: one short answer took 20 s with thinking and 2 s without.</small></label>
       </fieldset>
       <fieldset>
-        <legend>Tools (MCP server)</legend>
-        <label>Address <input name="tools.url" placeholder="http://trixie.local:35830/mcp">
-          <small>An MCP server whose tools the model may use before it answers, such as aqua-roaming's web search. Leave empty for none.</small></label>
-        <label>Token <input name="tools.token" type="password" autocomplete="off" placeholder="If the server needs one"></label>
+        <legend>Tools (MCP servers)</legend>
+        <small>MCP servers whose tools the model may use before it answers, such as aqua-roaming's web search at http://trixie.local:35830/mcp. Their tools, as the servers describe them, are listed in the model's instructions.</small>
+        <div id="servers"></div>
+        <button type="button" id="add-server">Add server</button>
       </fieldset>
       <p class="error" id="form-error"></p>
       <div class="row end">

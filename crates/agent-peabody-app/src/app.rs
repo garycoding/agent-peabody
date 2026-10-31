@@ -5,7 +5,7 @@
 //! gives the window its state and what happens.
 
 use agent_peabody_core::llm;
-use agent_peabody_core::pipeline::{self, Event, Running, Service, Timing};
+use agent_peabody_core::pipeline::{self, Command, Event, Running, Service, Timing};
 use agent_peabody_core::settings::{Endpoint, Settings};
 use agent_peabody_core::{http, voices};
 use serde::Serialize;
@@ -92,6 +92,9 @@ impl App {
                         s.size = *size;
                     }
                     _ => {
+                        if matches!(ev, Event::Cleared) {
+                            s.log.clear();
+                        }
                         s.log.push_back(line.clone());
                         if s.log.len() > LOG {
                             s.log.pop_front();
@@ -170,6 +173,42 @@ async fn save_settings(
     Ok(())
 }
 
+/// Switches Peabody on or off; off, it withdraws its listen request and hears nothing.
+#[tauri::command]
+async fn set_enabled(
+    on: bool,
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let settings = {
+        let mut s = app.settings.lock().unwrap();
+        s.enabled = on;
+        s.clone()
+    };
+    settings
+        .save(&app.settings_path())
+        .map_err(|e| e.to_string())?;
+    app.restart(handle).await;
+    Ok(())
+}
+
+/// Clears or compacts the conversation, between answers.
+#[tauri::command]
+async fn conversation(action: String, app: tauri::State<'_, App>) -> Result<(), String> {
+    let c = match action.as_str() {
+        "clear" => Command::Clear,
+        "compact" => Command::Compact,
+        other => return Err(format!("no such action: {other}")),
+    };
+    match app.running.lock().await.as_ref() {
+        Some(r) => {
+            r.command(c);
+            Ok(())
+        }
+        None => Err("Peabody is starting; try again in a moment".into()),
+    }
+}
+
 /// The models a server offers, for the settings dialog, before its settings are saved.
 #[tauri::command]
 async fn models(url: String, token: String) -> Result<Vec<String>, String> {
@@ -202,7 +241,13 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![state, save_settings, models])
+        .invoke_handler(tauri::generate_handler![
+            state,
+            save_settings,
+            set_enabled,
+            conversation,
+            models
+        ])
         .build(tauri::generate_context!())
         .expect("the app could not be built")
         .run(|handle, event| {

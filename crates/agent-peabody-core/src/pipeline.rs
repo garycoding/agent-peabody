@@ -3,10 +3,11 @@
 
 //! What Peabody does: each utterance heard through graptostream goes into the
 //! conversation, to the model, and its answer out through phonorheos, one at a time and
-//! in the order heard. Where an MCP server is set, its tools (a web search, say) are
-//! offered to the model, and Peabody calls the ones it asks for before it answers.
+//! in the order heard. Where MCP servers are set, their tools (a web search, say) are
+//! listed in the model's instructions and offered in the request, and Peabody calls the
+//! ones the model asks for before it answers.
 
-use crate::conversation::Conversation;
+use crate::conversation::{Conversation, KEEP_EXCHANGES};
 use crate::graptostream::{self, Link, Listen};
 use crate::llm::{self, Message};
 use crate::mcp;
@@ -36,7 +37,7 @@ pub enum Service {
     Graptostream,
     Phonorheos,
     Llm,
-    /// The MCP server whose tools the model is offered.
+    /// The MCP servers whose tools the model is offered.
     Tools,
 }
 
@@ -66,11 +67,29 @@ pub enum Event {
     Tool {
         text: String,
     },
+    /// A request to the model, as sent: a one-line summary and the whole of it.
+    #[serde(rename = "to_model")]
+    ToModel {
+        summary: String,
+        text: String,
+    },
+    /// The model's reply, as received, or why there was none.
+    #[serde(rename = "from_model")]
+    FromModel {
+        summary: String,
+        text: String,
+    },
     Replied {
         text: String,
     },
     Compacted {
         summary: String,
+    },
+    /// The conversation was cleared from the window.
+    Cleared,
+    /// Something the owner asked for that needs saying but is not a problem.
+    Notice {
+        text: String,
     },
     Error {
         text: String,
@@ -92,8 +111,11 @@ pub struct Pipeline {
     pub chat_failed: Arc<AtomicBool>,
     /// The instant reply said last, which is not said next.
     last_instant: Option<usize>,
-    /// The MCP session and its tools, opened when first needed and again after a failure.
-    tools: Option<(mcp::Session, Vec<Value>)>,
+    /// A session for each MCP server, in the settings' order, opened when first needed
+    /// and again after a failure.
+    servers: Vec<Option<mcp::Session>>,
+    /// The tools offered for the question in hand.
+    offered: Vec<Offered>,
     emit: Emit,
 }
 
@@ -108,7 +130,8 @@ impl Pipeline {
             context: None,
             chat_failed: Arc::default(),
             last_instant: None,
-            tools: None,
+            servers: Vec::new(),
+            offered: Vec::new(),
             emit,
         }
     }
@@ -123,6 +146,9 @@ impl Pipeline {
         self.learn_context().await;
         self.report_context();
         self.prepare_instant_replies().await;
+        // Found again with each question; looked for now so that the window shows whether
+        // the servers answer.
+        self.offer_tools().await;
     }
 
     /// Asks phonorheos to make and keep the instant replies' speech, unheard.
@@ -183,9 +209,11 @@ impl Pipeline {
         if self.context.is_none() {
             self.learn_context().await;
         }
+        self.offer_tools().await;
+        let prompt = with_tools(&self.settings.system_prompt, &self.offered);
         let mut compacted = false;
         let reply = loop {
-            let req = self.conversation.request(&self.settings.system_prompt);
+            let req = self.conversation.request(&prompt);
             match self.ask(&req).await {
                 Ok(r) => break Ok(r),
                 Err(llm::Error::ContextExceeded(_)) if !compacted => {
@@ -245,23 +273,15 @@ impl Pipeline {
         self.report_context();
     }
 
-    /// Asks the model, offering the MCP server's tools where one is set, and calls the
-    /// tools it asks for until it answers. The calls and their results go to the model
-    /// alone: they are not kept in the conversation.
+    /// Asks the model, offering the tools found for this question, and calls the tools it
+    /// asks for until it answers. The calls and their results go to the model alone: they
+    /// are not kept in the conversation.
     async fn ask(&mut self, req: &[Message]) -> Result<llm::Reply, llm::Error> {
-        let tools = self.offer_tools().await;
+        let tools: Vec<Value> = self.offered.iter().map(Offered::as_chat_tool).collect();
         let mut messages: Vec<Value> = req.iter().map(|m| json!(m)).collect();
         for round in 0..=MAX_TOOL_ROUNDS {
             let offer: &[Value] = if round < MAX_TOOL_ROUNDS { &tools } else { &[] };
-            let r = llm::chat(
-                &self.c,
-                &self.settings.llm,
-                &self.settings.model,
-                self.settings.thinking,
-                &messages,
-                offer,
-            )
-            .await?;
+            let r = self.chat(&messages, offer, "").await?;
             if r.tool_calls.is_empty() || offer.is_empty() {
                 return Ok(r);
             }
@@ -277,32 +297,103 @@ impl Pipeline {
         unreachable!("the last round offers no tools, so it returns")
     }
 
-    /// The tools to offer: none where no MCP server is set or it cannot be reached.
-    async fn offer_tools(&mut self) -> Vec<Value> {
-        if self.settings.tools.url.trim().is_empty() {
-            return Vec::new();
-        }
-        if self.tools.is_none() {
-            let opened = match mcp::Session::open(self.c.clone(), self.settings.tools.clone()).await
-            {
-                Ok(s) => s.tools().await.map(|t| (s, t)),
-                Err(e) => Err(e),
-            };
-            match opened {
-                Ok(st) => {
-                    self.link(Service::Tools, Ok(()));
-                    self.tools = Some(st);
+    /// One request to the model, shown in the window as sent and as answered.
+    async fn chat(
+        &self,
+        messages: &[Value],
+        tools: &[Value],
+        purpose: &str,
+    ) -> Result<llm::Reply, llm::Error> {
+        (self.emit)(Event::ToModel {
+            summary: format!(
+                "{} message{}{}{purpose}",
+                messages.len(),
+                if messages.len() == 1 { "" } else { "s" },
+                match tools.len() {
+                    0 => String::new(),
+                    n => format!(", {n} tool{}", if n == 1 { "" } else { "s" }),
+                }
+            ),
+            text: show_request(messages, tools, &self.settings),
+        });
+        let r = llm::chat(
+            &self.c,
+            &self.settings.llm,
+            &self.settings.model,
+            self.settings.thinking,
+            &messages,
+            tools,
+        )
+        .await;
+        (self.emit)(match &r {
+            Ok(reply) => Event::FromModel {
+                summary: reply_summary(reply),
+                text: show_reply(reply),
+            },
+            Err(e) => Event::FromModel {
+                summary: "failed".into(),
+                text: e.to_string(),
+            },
+        });
+        r
+    }
+
+    /// Finds the tools of every MCP server set, opening a session where none is open, and
+    /// reports the servers that cannot be reached; those that can are used.
+    async fn offer_tools(&mut self) {
+        self.offered.clear();
+        let eps = self.settings.tools.clone();
+        self.servers.resize_with(eps.len(), || None);
+        let mut failures = Vec::new();
+        for (i, ep) in eps.iter().enumerate() {
+            if ep.url.trim().is_empty() {
+                continue;
+            }
+            if self.servers[i].is_none() {
+                match mcp::Session::open(self.c.clone(), ep.clone()).await {
+                    Ok(s) => self.servers[i] = Some(s),
+                    Err(e) => {
+                        failures.push(format!("{}: {e}", ep.url));
+                        continue;
+                    }
+                }
+            }
+            let session = self.servers[i].as_ref().expect("opened above");
+            match session.tools().await {
+                Ok(tools) => {
+                    for t in tools {
+                        let f = &t["function"];
+                        let tool = f["name"].as_str().unwrap_or_default().to_string();
+                        let name = if self.offered.iter().any(|o| o.name == tool) {
+                            format!("{}_{tool}", identifier(&session.name))
+                        } else {
+                            tool.clone()
+                        };
+                        self.offered.push(Offered {
+                            name,
+                            tool,
+                            server: i,
+                            description: f["description"].as_str().unwrap_or_default().into(),
+                            parameters: f["parameters"].clone(),
+                        });
+                    }
                 }
                 Err(e) => {
-                    self.link(Service::Tools, Err(e));
-                    return Vec::new();
+                    failures.push(format!("{}: {e}", session.name));
+                    self.servers[i] = None;
                 }
             }
         }
-        self.tools
-            .as_ref()
-            .map(|(_, t)| t.clone())
-            .unwrap_or_default()
+        if eps.iter().any(|e| !e.url.trim().is_empty()) {
+            self.link(
+                Service::Tools,
+                if failures.is_empty() {
+                    Ok(())
+                } else {
+                    Err(failures.join("; "))
+                },
+            );
+        }
     }
 
     async fn call_tool(&mut self, call: &Value) -> String {
@@ -318,16 +409,51 @@ impl Pipeline {
         (self.emit)(Event::Tool {
             text: describe_call(name, &args),
         });
-        let Some((session, _)) = &self.tools else {
+        let Some(o) = self.offered.iter().find(|o| o.name == name) else {
+            return format!("There is no tool named {name}.");
+        };
+        let (server, tool) = (o.server, o.tool.clone());
+        let Some(session) = self.servers.get(server).and_then(Option::as_ref) else {
             return "The tool is not available.".into();
         };
-        let (out, failed) = session.call(name, args).await;
+        let (out, failed) = session.call(&tool, args).await;
         if failed {
             // The session may have lapsed; it is opened afresh for the next question.
-            self.tools = None;
-            self.link(Service::Tools, Err(out.clone()));
+            let server_name = session.name.clone();
+            self.servers[server] = None;
+            self.link(Service::Tools, Err(format!("{server_name}: {out}")));
         }
         out
+    }
+
+    /// Empties the conversation, at the owner's word from the window.
+    pub fn clear(&mut self) {
+        self.conversation = Conversation::default();
+        self.save();
+        (self.emit)(Event::Cleared);
+        self.report_context();
+    }
+
+    /// Summarises all but the last exchanges now, at the owner's word from the window.
+    pub async fn compact_now(&mut self) {
+        if self.conversation.compaction_request().is_none() {
+            (self.emit)(Event::Notice {
+                text: format!(
+                    "There is nothing to summarise yet: the last {KEEP_EXCHANGES} exchanges are always kept word for word."
+                ),
+            });
+            return;
+        }
+        if self.compact().await {
+            self.report_context();
+        }
+    }
+
+    pub async fn run(&mut self, c: Command) {
+        match c {
+            Command::Clear => self.clear(),
+            Command::Compact => self.compact_now().await,
+        }
     }
 
     /// Summarises all but the last exchanges; whether it did.
@@ -335,16 +461,8 @@ impl Pipeline {
         let Some(req) = self.conversation.compaction_request() else {
             return false;
         };
-        match llm::chat(
-            &self.c,
-            &self.settings.llm,
-            &self.settings.model,
-            self.settings.thinking,
-            &req,
-            &[],
-        )
-        .await
-        {
+        let messages: Vec<Value> = req.iter().map(|m| json!(m)).collect();
+        match self.chat(&messages, &[], " for a summary").await {
             Ok(r) if !r.content.is_empty() => {
                 self.conversation.compact(r.content.clone());
                 (self.emit)(Event::Compacted { summary: r.content });
@@ -387,6 +505,161 @@ impl Pipeline {
         }
         (self.emit)(link_event(service, r));
     }
+}
+
+/// A request as the window shows it opened: each message by role, then what was offered.
+fn show_request(messages: &[Value], tools: &[Value], s: &Settings) -> String {
+    let mut out = Vec::new();
+    for m in messages {
+        let role = m["role"].as_str().unwrap_or("?");
+        let content = m["content"].as_str().unwrap_or_default();
+        let mut block = match role {
+            "tool" => format!("[tool result {}]", m["tool_call_id"].as_str().unwrap_or("")),
+            r => format!("[{r}]"),
+        };
+        if !content.is_empty() {
+            block.push('\n');
+            block.push_str(content);
+        }
+        for c in m["tool_calls"].as_array().into_iter().flatten() {
+            block.push_str(&format!("\nasks for {}", show_call(c)));
+        }
+        out.push(block);
+    }
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str())
+        .collect();
+    out.push(format!(
+        "[sent with]\nmodel {}; thinking {}; tools: {}",
+        if s.model.is_empty() {
+            "(server's default)"
+        } else {
+            &s.model
+        },
+        if s.thinking { "on" } else { "off" },
+        if names.is_empty() {
+            "none".to_string()
+        } else {
+            names.join(", ")
+        }
+    ));
+    out.join("\n\n")
+}
+
+fn show_call(c: &Value) -> String {
+    let f = &c["function"];
+    let args = match &f["arguments"] {
+        Value::String(s) => s.clone(),
+        v => v.to_string(),
+    };
+    format!("{}({args})", f["name"].as_str().unwrap_or("?"))
+}
+
+fn reply_summary(r: &llm::Reply) -> String {
+    let what = if !r.tool_calls.is_empty() {
+        let names: Vec<&str> = r
+            .tool_calls
+            .iter()
+            .filter_map(|c| c["function"]["name"].as_str())
+            .collect();
+        format!("asks for {}", names.join(", "))
+    } else if r.content.is_empty() {
+        "no answer".to_string()
+    } else {
+        "answer".to_string()
+    };
+    match r.usage["total_tokens"].as_u64() {
+        Some(t) => format!("{what}, {t} tokens"),
+        None => what,
+    }
+}
+
+/// A reply as the window shows it opened: reasoning, answer, tool calls, token counts.
+fn show_reply(r: &llm::Reply) -> String {
+    let mut out = Vec::new();
+    if !r.reasoning.is_empty() {
+        out.push(format!("[reasoning]\n{}", r.reasoning));
+    }
+    if !r.content.is_empty() {
+        out.push(format!("[answer]\n{}", r.content));
+    }
+    for c in &r.tool_calls {
+        out.push(format!("[asks for]\n{}", show_call(c)));
+    }
+    let u = &r.usage;
+    let n = |k: &str| u[k].as_u64().map(|v| v.to_string());
+    let mut tokens = vec![];
+    if let Some(v) = n("prompt_tokens") {
+        tokens.push(format!("prompt {v}"));
+    }
+    if let Some(v) = n("completion_tokens") {
+        tokens.push(format!("completion {v}"));
+    }
+    if let Some(v) = u["completion_tokens_details"]["reasoning_tokens"].as_u64() {
+        tokens.push(format!("of which reasoning {v}"));
+    }
+    if let Some(v) = n("total_tokens") {
+        tokens.push(format!("total {v}"));
+    }
+    if !tokens.is_empty() {
+        out.push(format!("[tokens]\n{}", tokens.join(", ")));
+    }
+    if out.is_empty() {
+        "(empty reply)".into()
+    } else {
+        out.join("\n\n")
+    }
+}
+
+/// A tool offered to the model, and where it comes from.
+struct Offered {
+    /// The name the model sees: the server's own, or prefixed with the server's name
+    /// where an earlier server offers a tool of the same name.
+    name: String,
+    /// The name the server knows it by.
+    tool: String,
+    server: usize,
+    description: String,
+    parameters: Value,
+}
+
+impl Offered {
+    fn as_chat_tool(&self) -> Value {
+        json!({"type": "function", "function": {
+            "name": self.name, "description": self.description, "parameters": self.parameters}})
+    }
+}
+
+/// The system prompt with the tools listed after it, as their servers describe them.
+fn with_tools(system_prompt: &str, tools: &[Offered]) -> String {
+    if tools.is_empty() {
+        return system_prompt.to_string();
+    }
+    let list: Vec<String> = tools
+        .iter()
+        .map(|t| format!("- {}: {}", t.name, t.description))
+        .collect();
+    let list = format!("Tools available to you:\n{}", list.join("\n"));
+    if system_prompt.trim().is_empty() {
+        list
+    } else {
+        format!("{system_prompt}\n\n{list}")
+    }
+}
+
+/// A server's name made fit for a tool name: letters, digits and `_`.
+fn identifier(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
+/// What the window asks of a running Peabody.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Command {
+    Clear,
+    Compact,
 }
 
 /// A tool call as the window shows it: `search: current time in California`.
@@ -470,9 +743,15 @@ impl Default for Timing {
 pub struct Running {
     tasks: Vec<JoinHandle<()>>,
     listen: Listen,
+    commands: mpsc::UnboundedSender<Command>,
 }
 
 impl Running {
+    /// Passes a command from the window to the pipeline, which runs it between answers.
+    pub fn command(&self, c: Command) {
+        let _ = self.commands.send(c);
+    }
+
     pub async fn stop(self) {
         for t in &self.tasks {
             t.abort();
@@ -485,31 +764,42 @@ pub fn start(settings: Settings, conversation: PathBuf, emit: Emit, timing: Timi
     let c = http::client();
     let listen = Listen::new(c.clone(), settings.graptostream.clone());
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    let mut tasks = vec![tokio::spawn(listen.clone().hold(5.0, timing.renew))];
+    let (commands, mut cmds) = mpsc::unbounded_channel::<Command>();
+    let mut tasks = Vec::new();
 
-    let e = emit.clone();
-    tasks.push(tokio::spawn(graptostream::read_utterances(
-        c.clone(),
-        settings.graptostream.clone(),
-        settings.name.clone(),
-        tx,
-        move |l| {
-            e(link_event(
-                Service::Graptostream,
-                match l {
-                    Link::Connected => Ok(()),
-                    Link::Down(d) => Err(d),
-                },
-            ))
-        },
-    )));
+    // Switched off, Peabody holds no listen request and reads nothing from graptostream.
+    if settings.enabled {
+        tasks.push(tokio::spawn(listen.clone().hold(5.0, timing.renew)));
+        let e = emit.clone();
+        tasks.push(tokio::spawn(graptostream::read_utterances(
+            c.clone(),
+            settings.graptostream.clone(),
+            settings.name.clone(),
+            tx,
+            move |l| {
+                e(link_event(
+                    Service::Graptostream,
+                    match l {
+                        Link::Connected => Ok(()),
+                        Link::Down(d) => Err(d),
+                    },
+                ))
+            },
+        )));
+    } else {
+        drop(tx);
+    }
 
     let mut pipeline = Pipeline::new(settings.clone(), conversation, emit.clone());
     let chat_failed = pipeline.chat_failed.clone();
     tasks.push(tokio::spawn(async move {
         pipeline.connect().await;
-        while let Some(heard) = rx.recv().await {
-            pipeline.answer(&heard).await;
+        loop {
+            tokio::select! {
+                Some(heard) = rx.recv() => pipeline.answer(&heard).await,
+                Some(c) = cmds.recv() => pipeline.run(c).await,
+                else => break,
+            }
         }
     }));
 
@@ -528,7 +818,11 @@ pub fn start(settings: Settings, conversation: PathBuf, emit: Emit, timing: Timi
             tokio::time::sleep(timing.health).await;
         }
     }));
-    Running { tasks, listen }
+    Running {
+        tasks,
+        listen,
+        commands,
+    }
 }
 
 #[cfg(test)]
