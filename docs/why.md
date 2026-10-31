@@ -53,6 +53,11 @@ All by the owner on 2026-10-31.
 - **D10 Testing:** LM Studio on pacific with `google/gemma-4-12b`; chimchim is not used in building or testing.
 - **D11 Reasoning:** only `content` is spoken and kept; an empty answer is spoken as "I have no answer to that." and shown as a problem.
 
+Instant replies, by the owner on 2026-10-31:
+
+- **D12 Instant replies:** on each utterance Peabody says at once one of a list of short phrases, then asks the model and speaks its answer as before, since on a slow machine the answer takes several seconds and the silence leaves the speaker unsure whether Peabody heard. The four default phrases are the owner's. Peabody chooses one at random, never the one said last; the list is editable in the settings; the phrase is not kept in the conversation.
+- **D13 Kept speech:** the phrases must play at once, so phonorheos (from v0.3.0) keeps speech when asked: each `POST /speak` carries `speak` and `cache`. Peabody sends every phrase with `cache` set and `speak` unset when it starts, so that phonorheos makes them unheard, and the chosen phrase with both set when it is wanted; a phrase phonorheos has lost by restarting is made then and kept again. There is no periodic refresh and no check for an older phonorheos: the owner runs a matching version.
+
 Made during the build, within these rulings:
 
 - The tokens counted towards the window exclude the reasoning's, since the reasoning is not kept; counting them would summarise far too soon (found in the live test).

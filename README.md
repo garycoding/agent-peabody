@@ -17,7 +17,7 @@ Tried on a MacBook Air (macOS 26) with graptostream, phonorheos and LM Studio (`
 ## Requirements and install
 
 - **graptostream**, which runs on macOS only, on this Mac or on a Mac on the LAN, with a spoken name mapped to Peabody's name (`peabody` by default) in its Spoken names.
-- **phonorheos**, on this machine or on the LAN.
+- **phonorheos** v0.3.0 or later, on this machine or on the LAN.
 - **A model server** with the OpenAI chat API: llama.cpp's `llama-server` or LM Studio, on this machine or on the LAN.
 
 macOS (Apple Silicon, macOS 15 or later): open `agent-peabody-<version>-macos-arm64.dmg` and drag Peabody to Applications. The build is signed ad hoc only, not with a Developer ID, and is not notarised, so macOS refuses to open it the first time; clear the quarantine flag once:
@@ -40,7 +40,7 @@ On first start, Peabody opens its settings. Give the model server's address and 
 
 - **Hearing:** Peabody holds a graptostream listen request (`POST /listen`, renewed every four minutes, withdrawn on quit), so that graptostream listens whilst Peabody runs, and reads `GET /events?to=<name>&final=true`, resuming from the last event after a reconnection.
 - **The model:** each utterance is sent to `POST /v1/chat/completions` with the system prompt, the summary of earlier conversation (if any) and the exchanges since. Only the answer is kept and spoken; a reasoning model's reasoning is not.
-- **Speaking:** the answer goes to phonorheos's `POST /speak` with the chosen voice. Utterances that arrive whilst Peabody is answering are answered in order.
+- **Speaking:** as soon as an utterance arrives, one of the instant replies ("One moment please..." and the like) goes to phonorheos, which plays its kept speech at once; Peabody asked phonorheos to make and keep that speech, unheard, when it started (`"speak": false, "cache": true`). The answer then goes to phonorheos's `POST /speak` with the chosen voice. Utterances that arrive whilst Peabody is answering are answered in order.
 - **Context:** the window's size comes from the settings, else from llama.cpp's `GET /props` or LM Studio's `GET /api/v0/models`. When the conversation reaches 75% of it, measured by the token counts the server returns, Peabody asks the model to summarise all but the last four exchanges. If the server reports the window exceeded, Peabody summarises and tries once more.
 
 ## Privacy

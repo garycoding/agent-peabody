@@ -34,6 +34,15 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = "You are Peabody, a helpful assistant in
 conversation. Your replies are read aloud, so answer briefly, in plain spoken sentences, \
 with no Markdown, lists, headings, code or emoji.";
 
+/// The phrases said at once when an utterance arrives, while the model is asked; the
+/// owner's own (2026-10-31).
+pub const DEFAULT_INSTANT_REPLIES: [&str; 4] = [
+    "Allow me to think about that...",
+    "One moment please...",
+    "Thinking...",
+    "Allow me time to prepare a cogent response...",
+];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -51,6 +60,9 @@ pub struct Settings {
     /// The context window's size in tokens, where the server does not report it or the
     /// owner overrides what it reports.
     pub context_size: Option<u32>,
+    /// Said at once on each utterance, one chosen at random, before the answer; phonorheos
+    /// keeps their speech so that they play without delay. None turns this off.
+    pub instant_replies: Vec<String>,
 }
 
 impl Default for Settings {
@@ -64,6 +76,7 @@ impl Default for Settings {
             llm: Endpoint::default(),
             model: String::new(),
             context_size: None,
+            instant_replies: DEFAULT_INSTANT_REPLIES.map(String::from).to_vec(),
         }
     }
 }
