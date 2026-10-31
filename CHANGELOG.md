@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Features
+
+- Offer an MCP server's tools to the model (#12)
+
 ## [v0.3.0] - 2026-10-31
 
 ### Highlights
