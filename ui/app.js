@@ -15,7 +15,7 @@ function el(tag, attrs, ...children) {
   return e;
 }
 
-const WHO = { heard: "You", replied: "Peabody", compacted: "Summary", error: "Problem" };
+const WHO = { heard: "You", holding: "Peabody", replied: "Peabody", compacted: "Summary", error: "Problem" };
 
 function lineText(l) {
   if (l.kind === "compacted") return "The conversation was summarised to fit the context window: " + l.summary;
@@ -83,7 +83,7 @@ function fields() {
 function openSettings() {
   for (const f of fields()) {
     const v = f.name.split(".").reduce((o, k) => o?.[k], state.settings);
-    f.value = v ?? "";
+    f.value = Array.isArray(v) ? v.join("\n") : v ?? "";
   }
   $("context-note").textContent = state.settings.context_size == null && state.size
     ? `The server reports ${state.size} tokens. Leave empty to use it.`
@@ -116,7 +116,11 @@ $("form").addEventListener("submit", async (ev) => {
     const last = path.pop();
     const target = path.reduce((o, k) => o[k], s);
     const v = f.value.trim();
-    target[last] = f.name === "context_size" ? (v ? Number(v) : null) : f.name === "system_prompt" ? f.value : v;
+    target[last] =
+      f.name === "context_size" ? (v ? Number(v) : null)
+      : f.name === "system_prompt" ? f.value
+      : f.name === "instant_replies" ? v.split("\n").map((p) => p.trim()).filter(Boolean)
+      : v;
   }
   try {
     await invoke("save_settings", { settings: s });
