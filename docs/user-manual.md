@@ -19,9 +19,12 @@ On Ubuntu, graptostream runs on a Mac and Peabody reaches it over the network.
 
 ## The window
 
-- **The top line:** a dot for each service (graptostream, the model, phonorheos): green when it answers, orange when it does not, with the reason when you point at it. A line below the header repeats any problem.
-- **The context:** how many tokens the conversation takes, out of the model's context window.
-- **The conversation:** what you said ("You"), the instant reply (in italics), what Peabody answered, when the conversation was summarised, and any problem.
+- **On / Off:** switches Peabody off and on. Off, it withdraws its listen request from graptostream (so graptostream in "When asked" mode stops listening for it) and answers nothing; what you say while it is off is not answered later. It stays as you left it when reopened.
+- **The top line:** a dot for each service (graptostream, the model, phonorheos, and the tools when servers are set): green when it answers, orange when it does not, with the reason when you point at it. A line below the header repeats any problem.
+- **The context:** how full the model's context window is, as a percentage and a bar; pointing at it gives the tokens. The conversation is summarised on its own at 75%.
+- **Compact:** summarises all but the last four exchanges now, without waiting for 75%.
+- **Clear:** deletes the whole conversation; it asks for a second click within three seconds.
+- **The conversation:** what you said ("You"), the instant reply (in italics), each tool call, what Peabody answered, when the conversation was summarised or cleared, and any problem.
 - **Settings** opens the settings.
 
 ## Talking to Peabody
@@ -30,7 +33,7 @@ Say the spoken name and then your question, in one breath: "Peabody, what is the
 
 As soon as it hears you, Peabody says a short phrase such as "One moment please...", so that the wait for the model is not silent; on a slow machine the answer can take several seconds. It chooses one of its instant replies at random, never the one it said last. When it starts, it asks phonorheos to make and keep the speech for every instant reply without playing it, so that each plays at once when wanted; if phonorheos has been restarted since, the first use of a phrase takes a moment and it is kept again. The instant reply is not part of the conversation: the model never sees it.
 
-With a tools server set, Peabody offers its tools to the model with each question. When the model asks for one (a web search, say), Peabody calls it, shows the call in the window ("Tool: search: current time in California"), and passes the result back, up to four rounds, after which the model must answer with what it has. Each round adds the tool's time and another turn of the model's, so an answer that needs a search takes some seconds longer. The tool calls and their results are not kept in the conversation; a result longer than 8000 characters is cut. A fourth dot in the window shows whether the tools server answers; if it cannot be reached, Peabody answers without tools.
+With tools servers set, Peabody lists their tools in the model's instructions, as each server describes them, and offers them with each question. Where two servers offer a tool of the same name, the second is given its server's name in front (`other_search`). When the model asks for one (a web search, say), Peabody calls it, shows the call in the window ("Tool: search: current time in California"), and passes the result back, up to four rounds, after which the model must answer with what it has. Each round adds the tool's time and another turn of the model's, so an answer that needs a search takes some seconds longer. The tool calls and their results are not kept in the conversation; a result longer than 8000 characters is cut. A fourth dot shows whether the servers answer; a server that cannot be reached is named there, and Peabody answers with the tools of the others. A model may still answer from habit that it cannot look things up, especially in a long conversation from before it had tools.
 
 Peabody remembers the conversation, including after it is closed and reopened. There is no way to start afresh: when the conversation grows to three quarters of the model's context window, Peabody asks the model to summarise all but the last four exchanges, and carries on from the summary. The window shows each summary.
 
@@ -47,7 +50,7 @@ Peabody remembers the conversation, including after it is closed and reopened. T
 | Model server address and token | For LM Studio, `http://127.0.0.1:1234` (or `http://<machine>.local:1234` with "Serve on local network" on); for llama.cpp, the address `llama-server` listens on. A token only where the server is set to require one. |
 | Model | The model's name as the server gives it. List models asks the server. |
 | Context size | Leave empty to use the size the server reports; set it where the server reports none or you want Peabody to summarise sooner. |
-| Tools address and token | An MCP server whose tools the model may use before it answers, such as aqua-roaming's web search at `http://trixie.local:35830/mcp`. Leave empty for none. A token only where the server requires one. |
+| Tools (MCP servers) | Any number of MCP servers whose tools the model may use before it answers, each an address and, where the server requires one, a token; Add server and Remove change the list. aqua-roaming's web search is at `http://trixie.local:35830/mcp`. An empty list means no tools. |
 | Let the model think before answering | Off by default. A reasoning model such as Gemma 4 thinks before it answers, which helps with hard questions but takes far longer: on a MacBook Air, a one-sentence answer took 20 seconds with thinking and 2 seconds without. Off, Peabody asks the server to skip the thinking (`"reasoning_effort": "none"`); LM Studio honours this. A server that does not know the request ignores it. |
 
 Saving the settings reconnects at once.

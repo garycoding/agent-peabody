@@ -22,6 +22,8 @@ pub const RESULT_LIMIT: usize = 8000;
 
 /// A session with one MCP server.
 pub struct Session {
+    /// The server's name for itself (`serverInfo.name`), or its address.
+    pub name: String,
     c: reqwest::Client,
     ep: Endpoint,
     id: Option<String>,
@@ -32,12 +34,13 @@ impl Session {
     /// Opens a session: `initialize`, then the `initialized` notification.
     pub async fn open(c: reqwest::Client, ep: Endpoint) -> Result<Self, String> {
         let mut s = Self {
+            name: ep.url.clone(),
             c,
             ep,
             id: None,
             next: AtomicU64::new(1),
         };
-        let (_, id) = s
+        let (r, id) = s
             .rpc(
                 "initialize",
                 json!({
@@ -48,6 +51,9 @@ impl Session {
             )
             .await?;
         s.id = id;
+        if let Some(n) = r["serverInfo"]["name"].as_str().filter(|n| !n.is_empty()) {
+            s.name = n.to_string();
+        }
         s.notify("notifications/initialized").await;
         Ok(s)
     }
