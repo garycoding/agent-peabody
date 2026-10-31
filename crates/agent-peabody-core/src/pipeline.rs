@@ -171,7 +171,15 @@ impl Pipeline {
         let mut compacted = false;
         let reply = loop {
             let req = self.conversation.request(&self.settings.system_prompt);
-            match llm::chat(&self.c, &self.settings.llm, &self.settings.model, &req).await {
+            match llm::chat(
+                &self.c,
+                &self.settings.llm,
+                &self.settings.model,
+                self.settings.thinking,
+                &req,
+            )
+            .await
+            {
                 Ok(r) => break Ok(r),
                 Err(llm::Error::ContextExceeded(_)) if !compacted => {
                     compacted = true;
@@ -235,7 +243,15 @@ impl Pipeline {
         let Some(req) = self.conversation.compaction_request() else {
             return false;
         };
-        match llm::chat(&self.c, &self.settings.llm, &self.settings.model, &req).await {
+        match llm::chat(
+            &self.c,
+            &self.settings.llm,
+            &self.settings.model,
+            self.settings.thinking,
+            &req,
+        )
+        .await
+        {
             Ok(r) if !r.content.is_empty() => {
                 self.conversation.compact(r.content.clone());
                 (self.emit)(Event::Compacted { summary: r.content });
