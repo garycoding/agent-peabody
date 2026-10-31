@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.5.1] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Bug fixes
+
+- Fresh connections and one retry for MCP requests (#17)
+
 ## [v0.5.0] - 2026-10-31
 
 ### Highlights
