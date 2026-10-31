@@ -31,8 +31,10 @@ pub struct Session {
 }
 
 impl Session {
-    /// Opens a session: `initialize`, then the `initialized` notification.
-    pub async fn open(c: reqwest::Client, ep: Endpoint) -> Result<Self, String> {
+    /// Opens a session: `initialize`, then the `initialized` notification. Its requests go
+    /// on fresh connections ([`http::fresh_client`]).
+    pub async fn open(ep: Endpoint) -> Result<Self, String> {
+        let c = http::fresh_client();
         let mut s = Self {
             name: ep.url.clone(),
             c,
@@ -105,14 +107,17 @@ impl Session {
         rb
     }
 
-    /// One request and its result, with the session id the server gave, if any.
+    /// One request and its result, with the session id the server gave, if any. A request
+    /// that could not be sent, or whose connection closed before an answer came, is sent
+    /// once more.
     async fn rpc(&self, method: &str, params: Value) -> Result<(Value, Option<String>), String> {
         let n = self.next.fetch_add(1, Ordering::Relaxed);
-        let r = self
-            .post(json!({"jsonrpc": "2.0", "id": n, "method": method, "params": params}))
-            .send()
-            .await
-            .map_err(|e| http::describe(&e))?;
+        let body = json!({"jsonrpc": "2.0", "id": n, "method": method, "params": params});
+        let r = match self.post(body.clone()).send().await {
+            Err(e) if e.is_connect() || e.is_request() => self.post(body).send().await,
+            other => other,
+        }
+        .map_err(|e| http::describe(&e))?;
         let status = r.status();
         let session = r
             .headers()

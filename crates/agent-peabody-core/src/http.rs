@@ -13,6 +13,18 @@ pub fn client() -> reqwest::Client {
         .expect("the HTTP client could not be built")
 }
 
+/// A client that opens a fresh connection for every request. A server may close an idle
+/// connection at the moment a pooled client sends on it (uvicorn closes them after 5 s):
+/// aqua-roaming never saw a tool call that Peabody sent on such a connection 5 s after
+/// listing the tools. On a LAN the new connection costs about a millisecond.
+pub fn fresh_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .pool_max_idle_per_host(0)
+        .build()
+        .expect("the HTTP client could not be built")
+}
+
 /// A request to `path` on `ep`, carrying its token where it has one.
 pub fn request(
     c: &reqwest::Client,
