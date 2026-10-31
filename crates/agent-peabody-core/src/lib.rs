@@ -2,3 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Peabody's core: everything that needs no window.
+
+pub mod conversation;
+pub mod graptostream;
+pub mod http;
+pub mod llm;
+pub mod phonorheos;
+pub mod pipeline;
+pub mod settings;
+mod store;
+pub mod voices;
