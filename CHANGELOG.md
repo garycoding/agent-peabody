@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.2.0] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Features
+
+- Say an instant reply while the model is asked (#8)
+
 ## [v0.1.0] - 2026-10-31
 
 ### Highlights
