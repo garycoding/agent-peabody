@@ -94,6 +94,10 @@ pub fn parse_reply(v: &Value) -> Reply {
     }
 }
 
+/// How long an answer may take: a reasoning model on a small machine took eight minutes
+/// for one long answer, so the limit only catches a server that never answers.
+pub const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
 pub async fn chat(
     c: &reqwest::Client,
     ep: &Endpoint,
@@ -105,6 +109,7 @@ pub async fn chat(
         body["model"] = json!(model);
     }
     let r = http::request(c, Method::POST, ep, "/v1/chat/completions")
+        .timeout(ANSWER_TIMEOUT)
         .json(&body)
         .send()
         .await
