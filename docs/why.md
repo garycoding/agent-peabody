@@ -1,0 +1,61 @@
+<!--
+SPDX-FileCopyrightText: 2026 Gary Frattarola <garyf@parkviewlab.ai>
+SPDX-License-Identifier: CC-BY-4.0
+-->
+
+# Why Peabody is as it is
+
+The README says what Peabody is and how it is used. This file records why: the requirements it was built to, the evidence gathered during the build, and the decisions, each with its date.
+
+## The need
+
+graptostream lets the owner speak to apps by name, and phonorheos lets apps answer aloud. Peabody joins them to a language model, so that the owner can hold a spoken conversation with a model running on the lab's own machines.
+
+## Requirements
+
+Given by the owner in conversation on 2026-10-31.
+
+1. A desktop app for macOS and Ubuntu Desktop, in a public repository in the owner's `garycoding` account, following the ParkviewLab handbook.
+2. It hears, through graptostream, the utterances addressed to its name, sends them to a language model, and speaks the answers through phonorheos.
+3. A settings dialog holds its name, the phonorheos voice, the connection to graptostream, to phonorheos and to the model server (each local, or over the LAN with a token), and the model.
+4. It keeps the conversation, since the chat endpoint keeps none. The context window's size comes from the server or from a setting. When the conversation reaches 75% of the window, Peabody asks the model to summarise the older part and keeps the last few exchanges word for word.
+5. There is no way to start a fresh conversation.
+6. The model server may be llama.cpp (chimchim's, entered by the owner in the settings) or LM Studio (pacific's, used for testing and for the owner's own setup).
+7. The code is `AGPL-3.0-or-later` with no commercial alternative; the documentation `CC-BY-4.0`; the brand marks reserved.
+
+## Evidence
+
+### LM Studio on pacific (2026-10-31)
+
+- `POST /v1/chat/completions` returns `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`), so the 75% measure works as with llama.cpp.
+- LM Studio does not serve llama.cpp's `GET /props`. Its `GET /api/v0/models` gives each model's `state` and, for a loaded model, `loaded_context_length` (8192 for `google/gemma-4-12b:2`, whose `max_context_length` is 262144). A loaded instance can carry a suffix (`:2`), so Peabody matches the model's name with or without it.
+- Gemma 4 reasons before it answers. The reply carries the reasoning in `reasoning_content`, apart from `content`, and its tokens are counted in `completion_tokens` and again in `completion_tokens_details.reasoning_tokens`. One 400-word answer took 3787 reasoning tokens and about eight minutes on the MacBook Air.
+
+### The live test (pacific, 2026-10-31)
+
+- Peabody's listen request made graptostream listen in its When asked mode, and Peabody was listed among its readers.
+- Speech played through the speaker did not test addressing: the speech engine dropped or misheard the leading "Peabody" in each of five attempts, in three voices, with a video playing in the room ("Hmm. Peabody" was heard as "Hey buddy"). Addressing awaits the owner's own voice; the rest of the chain was tested with a stand-in graptostream that delivers typed utterances.
+- With LM Studio and phonorheos: answers were spoken in `bm_lewis`; a follow-up was answered from the kept conversation; the conversation survived a restart; with the context size set to 800, the conversation was summarised at 75%, the last four exchanges were kept, and a question about the first exchange was answered from the summary.
+
+## Decisions
+
+All by the owner on 2026-10-31.
+
+- **D1 Name:** the name setting is the app name Peabody reads from graptostream (`/events?to=<name>`), `peabody` by default; the owner maps the spoken name to it in graptostream. graptostream already matches names loosely and removes them, and has no endpoint through which another app could register a name.
+- **D2 Signing:** the macOS build is signed and notarised in CI with the five Apple secrets, once they are added to this repository (a `garycoding` repository does not receive ParkviewLab's organisation secrets). Amended the same day: v0.1.0 ships unsigned.
+- **D3 Merges:** the session merges each pull request once its checks have passed; v0.1.0 was to be released without a further review.
+- **D4 Persistence:** the conversation is kept in the data folder and survives a restart.
+- **D5 Compaction:** the last four exchanges are kept word for word.
+- **D6 System prompt:** a default asking for short answers in plain spoken sentences, editable in the settings.
+- **D7 Identity:** product name Peabody; binary `agent-peabody`; bundle identifier `io.github.garycoding.agent-peabody`.
+- **D8 Queueing:** utterances that arrive whilst Peabody answers are answered in order.
+- **D9 Listening:** Peabody holds a graptostream listen request for as long as it runs.
+- **D10 Testing:** LM Studio on pacific with `google/gemma-4-12b`; chimchim is not used in building or testing.
+- **D11 Reasoning:** only `content` is spoken and kept; an empty answer is spoken as "I have no answer to that." and shown as a problem.
+
+Made during the build, within these rulings:
+
+- The tokens counted towards the window exclude the reasoning's, since the reasoning is not kept; counting them would summarise far too soon (found in the live test).
+- When the model cannot be reached, Peabody says "I could not get an answer from the model." and does not keep the unanswered question, so that the exchanges stay paired.
+- The voices are phonorheos's 28 Kokoro voices, listed in Peabody, since phonorheos has no endpoint that lists them.
+- A graptostream stream silent for 45 s (three missed keep-alives) is reconnected, since a LAN link that drops without closing would otherwise leave Peabody deaf; a chat request is given up after 15 minutes, well beyond the eight minutes a long answer took on pacific (from the code review).
