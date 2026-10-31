@@ -67,6 +67,18 @@ pub enum Event {
     Tool {
         text: String,
     },
+    /// A request to the model, as sent: a one-line summary and the whole of it.
+    #[serde(rename = "to_model")]
+    ToModel {
+        summary: String,
+        text: String,
+    },
+    /// The model's reply, as received, or why there was none.
+    #[serde(rename = "from_model")]
+    FromModel {
+        summary: String,
+        text: String,
+    },
     Replied {
         text: String,
     },
@@ -269,15 +281,7 @@ impl Pipeline {
         let mut messages: Vec<Value> = req.iter().map(|m| json!(m)).collect();
         for round in 0..=MAX_TOOL_ROUNDS {
             let offer: &[Value] = if round < MAX_TOOL_ROUNDS { &tools } else { &[] };
-            let r = llm::chat(
-                &self.c,
-                &self.settings.llm,
-                &self.settings.model,
-                self.settings.thinking,
-                &messages,
-                offer,
-            )
-            .await?;
+            let r = self.chat(&messages, offer, "").await?;
             if r.tool_calls.is_empty() || offer.is_empty() {
                 return Ok(r);
             }
@@ -291,6 +295,47 @@ impl Pipeline {
             }
         }
         unreachable!("the last round offers no tools, so it returns")
+    }
+
+    /// One request to the model, shown in the window as sent and as answered.
+    async fn chat(
+        &self,
+        messages: &[Value],
+        tools: &[Value],
+        purpose: &str,
+    ) -> Result<llm::Reply, llm::Error> {
+        (self.emit)(Event::ToModel {
+            summary: format!(
+                "{} message{}{}{purpose}",
+                messages.len(),
+                if messages.len() == 1 { "" } else { "s" },
+                match tools.len() {
+                    0 => String::new(),
+                    n => format!(", {n} tool{}", if n == 1 { "" } else { "s" }),
+                }
+            ),
+            text: show_request(messages, tools, &self.settings),
+        });
+        let r = llm::chat(
+            &self.c,
+            &self.settings.llm,
+            &self.settings.model,
+            self.settings.thinking,
+            &messages,
+            tools,
+        )
+        .await;
+        (self.emit)(match &r {
+            Ok(reply) => Event::FromModel {
+                summary: reply_summary(reply),
+                text: show_reply(reply),
+            },
+            Err(e) => Event::FromModel {
+                summary: "failed".into(),
+                text: e.to_string(),
+            },
+        });
+        r
     }
 
     /// Finds the tools of every MCP server set, opening a session where none is open, and
@@ -416,16 +461,8 @@ impl Pipeline {
         let Some(req) = self.conversation.compaction_request() else {
             return false;
         };
-        match llm::chat(
-            &self.c,
-            &self.settings.llm,
-            &self.settings.model,
-            self.settings.thinking,
-            &req,
-            &[],
-        )
-        .await
-        {
+        let messages: Vec<Value> = req.iter().map(|m| json!(m)).collect();
+        match self.chat(&messages, &[], " for a summary").await {
             Ok(r) if !r.content.is_empty() => {
                 self.conversation.compact(r.content.clone());
                 (self.emit)(Event::Compacted { summary: r.content });
@@ -467,6 +504,111 @@ impl Pipeline {
             self.chat_failed.store(r.is_err(), Ordering::Relaxed);
         }
         (self.emit)(link_event(service, r));
+    }
+}
+
+/// A request as the window shows it opened: each message by role, then what was offered.
+fn show_request(messages: &[Value], tools: &[Value], s: &Settings) -> String {
+    let mut out = Vec::new();
+    for m in messages {
+        let role = m["role"].as_str().unwrap_or("?");
+        let content = m["content"].as_str().unwrap_or_default();
+        let mut block = match role {
+            "tool" => format!("[tool result {}]", m["tool_call_id"].as_str().unwrap_or("")),
+            r => format!("[{r}]"),
+        };
+        if !content.is_empty() {
+            block.push('\n');
+            block.push_str(content);
+        }
+        for c in m["tool_calls"].as_array().into_iter().flatten() {
+            block.push_str(&format!("\nasks for {}", show_call(c)));
+        }
+        out.push(block);
+    }
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str())
+        .collect();
+    out.push(format!(
+        "[sent with]\nmodel {}; thinking {}; tools: {}",
+        if s.model.is_empty() {
+            "(server's default)"
+        } else {
+            &s.model
+        },
+        if s.thinking { "on" } else { "off" },
+        if names.is_empty() {
+            "none".to_string()
+        } else {
+            names.join(", ")
+        }
+    ));
+    out.join("\n\n")
+}
+
+fn show_call(c: &Value) -> String {
+    let f = &c["function"];
+    let args = match &f["arguments"] {
+        Value::String(s) => s.clone(),
+        v => v.to_string(),
+    };
+    format!("{}({args})", f["name"].as_str().unwrap_or("?"))
+}
+
+fn reply_summary(r: &llm::Reply) -> String {
+    let what = if !r.tool_calls.is_empty() {
+        let names: Vec<&str> = r
+            .tool_calls
+            .iter()
+            .filter_map(|c| c["function"]["name"].as_str())
+            .collect();
+        format!("asks for {}", names.join(", "))
+    } else if r.content.is_empty() {
+        "no answer".to_string()
+    } else {
+        "answer".to_string()
+    };
+    match r.usage["total_tokens"].as_u64() {
+        Some(t) => format!("{what}, {t} tokens"),
+        None => what,
+    }
+}
+
+/// A reply as the window shows it opened: reasoning, answer, tool calls, token counts.
+fn show_reply(r: &llm::Reply) -> String {
+    let mut out = Vec::new();
+    if !r.reasoning.is_empty() {
+        out.push(format!("[reasoning]\n{}", r.reasoning));
+    }
+    if !r.content.is_empty() {
+        out.push(format!("[answer]\n{}", r.content));
+    }
+    for c in &r.tool_calls {
+        out.push(format!("[asks for]\n{}", show_call(c)));
+    }
+    let u = &r.usage;
+    let n = |k: &str| u[k].as_u64().map(|v| v.to_string());
+    let mut tokens = vec![];
+    if let Some(v) = n("prompt_tokens") {
+        tokens.push(format!("prompt {v}"));
+    }
+    if let Some(v) = n("completion_tokens") {
+        tokens.push(format!("completion {v}"));
+    }
+    if let Some(v) = u["completion_tokens_details"]["reasoning_tokens"].as_u64() {
+        tokens.push(format!("of which reasoning {v}"));
+    }
+    if let Some(v) = n("total_tokens") {
+        tokens.push(format!("total {v}"));
+    }
+    if !tokens.is_empty() {
+        out.push(format!("[tokens]\n{}", tokens.join(", ")));
+    }
+    if out.is_empty() {
+        "(empty reply)".into()
+    } else {
+        out.join("\n\n")
     }
 }
 

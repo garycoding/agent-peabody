@@ -724,3 +724,59 @@ async fn switched_off_it_neither_listens_nor_hears() {
     assert!(voice.said.lock().unwrap().is_empty());
     assert!(model.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn shows_every_request_to_the_model_and_every_reply() {
+    let (model, voice, tools) = (Model::default(), Voice::default(), Tools::default());
+    model.replies.lock().unwrap().extend([
+        tool_call("search", json!({"query": "weather"})),
+        reply("Sunny.", 120),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, events) = collect();
+    let mut s = settings(&model, &voice).await;
+    s.tools = vec![tools_server(&tools, "stub").await];
+    let mut p = Pipeline::new(s, dir.path().join("c.json"), emit);
+    p.answer("weather?").await;
+    let ev = events.lock().unwrap();
+    let traffic: Vec<(&str, &str, &str)> = ev
+        .iter()
+        .filter_map(|e| match e {
+            Event::ToModel { summary, text } => Some(("to", summary.as_str(), text.as_str())),
+            Event::FromModel { summary, text } => Some(("from", summary.as_str(), text.as_str())),
+            _ => None,
+        })
+        .collect();
+    let summaries: Vec<(&str, &str)> = traffic.iter().map(|(d, s, _)| (*d, *s)).collect();
+    assert_eq!(
+        summaries,
+        [
+            ("to", "2 messages, 1 tool"),
+            ("from", "asks for search, 90 tokens"),
+            ("to", "4 messages, 1 tool"),
+            ("from", "answer, 120 tokens"),
+        ]
+    );
+    // Opened, a request shows every message and what was offered; a reply its parts.
+    assert!(traffic[0].2.contains("[user]\nweather?"));
+    assert!(
+        traffic[0]
+            .2
+            .contains("Tools available to you:\n- search: Web search")
+    );
+    assert!(traffic[0].2.ends_with("tools: search"));
+    assert!(
+        traffic[2]
+            .2
+            .contains("[tool result c1]\nIt is 1:20 pm in California.")
+    );
+    assert!(traffic[1].2.contains(
+        r#"[asks for]
+search({"query":"weather"})"#
+    ));
+    assert!(
+        traffic[3]
+            .2
+            .starts_with("[reasoning]\nthinking\n\n[answer]\nSunny.")
+    );
+}
