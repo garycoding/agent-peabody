@@ -46,3 +46,15 @@ small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 .about { color: var(--muted); font-size: 12px; padding: 0 20px 16px; }
 label.check input { width: auto; margin: 0 6px 0 0; vertical-align: middle; }
 .conversation .tool .text { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+button.power { min-width: 48px; border-color: var(--ok); color: var(--ok); }
+button.power.off { border-color: var(--warn); color: var(--warn); }
+body.off .links { opacity: .4; }
+button.confirm { border-color: var(--warn); color: var(--warn); }
+.context { display: inline-flex; align-items: center; gap: 6px; }
+.gauge { width: 70px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.gauge .fill { display: block; height: 100%; width: 0; background: var(--ok); }
+.gauge .fill.high { background: var(--warn); }
+.server { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+.server input.url { flex: 3; } .server input.token { flex: 2; } .server button { flex: none; }
+#add-server { margin-top: 8px; }
+.conversation .notice .text, .conversation .cleared .text { color: var(--muted); font-style: italic; }

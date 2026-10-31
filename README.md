@@ -18,7 +18,7 @@ Tried on a MacBook Air (macOS 26) with graptostream, phonorheos and LM Studio (`
 
 - **graptostream**, which runs on macOS only, on this Mac or on a Mac on the LAN, with a spoken name mapped to Peabody's name (`peabody` by default) in its Spoken names.
 - **phonorheos** v0.3.0 or later, on this machine or on the LAN.
-- **Optionally, an MCP server** whose tools the model may use, such as [aqua-roaming](https://github.com/garycoding/aqua-roaming)'s web search through SearXNG.
+- **Optionally, MCP servers** whose tools the model may use, such as [aqua-roaming](https://github.com/garycoding/aqua-roaming)'s web search through SearXNG.
 - **A model server** with the OpenAI chat API: llama.cpp's `llama-server` or LM Studio, on this machine or on the LAN.
 
 macOS (Apple Silicon, macOS 15 or later): open `agent-peabody-<version>-macos-arm64.dmg` and drag Peabody to Applications. The build is signed ad hoc only, not with a Developer ID, and is not notarised, so macOS refuses to open it the first time; clear the quarantine flag once:

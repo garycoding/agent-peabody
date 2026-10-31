@@ -15,10 +15,11 @@ function el(tag, attrs, ...children) {
   return e;
 }
 
-const WHO = { heard: "You", holding: "Peabody", tool: "Tool", replied: "Peabody", compacted: "Summary", error: "Problem" };
+const WHO = { heard: "You", holding: "Peabody", tool: "Tool", notice: "Note", cleared: "Cleared", replied: "Peabody", compacted: "Summary", error: "Problem" };
 
 function lineText(l) {
-  if (l.kind === "compacted") return "The conversation was summarised to fit the context window: " + l.summary;
+  if (l.kind === "compacted") return "The conversation was summarised: " + l.summary;
+  if (l.kind === "cleared") return "The conversation was cleared.";
   return l.text;
 }
 
@@ -43,17 +44,29 @@ function showLink(service, link) {
 
 function showContext() {
   const { tokens, size } = state;
-  $("context").textContent = size
-    ? `${tokens ?? "?"} of ${size} tokens` + (tokens ? ` (${Math.round((100 * tokens) / size)}%)` : "")
-    : "Context size unknown";
-  $("context").title = "The conversation is summarised when it reaches 75% of the context window.";
+  const pct = size && tokens ? Math.round((100 * tokens) / size) : size ? 0 : null;
+  $("context").textContent = pct == null ? "Context size unknown" : `${pct}% of context`;
+  $("context-fill").style.width = `${Math.min(pct ?? 0, 100)}%`;
+  $("context-fill").classList.toggle("high", (pct ?? 0) >= 75);
+  $("context-box").title = size
+    ? `${tokens ?? 0} of ${size} tokens. The conversation is summarised when it reaches 75%.`
+    : "The model server has not reported its context size.";
+}
+
+function showPower() {
+  const on = state.settings.enabled !== false;
+  $("power").textContent = on ? "On" : "Off";
+  $("power").classList.toggle("off", !on);
+  $("power").title = on ? "Switch Peabody off: it stops listening and answering" : "Switch Peabody on";
+  document.body.classList.toggle("off", !on);
 }
 
 async function load() {
   state = await invoke("state");
   $("log").replaceChildren(el("li", { class: "empty" }, "Say “Peabody,” then what you want to ask."));
   for (const l of state.log) addLine(l);
-  $("link-tools").hidden = !state.settings.tools?.url;
+  $("link-tools").hidden = !(state.settings.tools || []).some((t) => t.url);
+  showPower();
   for (const s of ["graptostream", "llm", "phonorheos", "tools"]) showLink(s, state.links[s]);
   showContext();
   $("about").textContent = `Peabody ${state.version} · data in ${state.data}`;
@@ -72,9 +85,48 @@ listen("peabody", ({ payload: l }) => {
     state.size = l.size;
     showContext();
   } else {
+    if (l.kind === "cleared") $("log").replaceChildren();
     addLine(l);
   }
 });
+
+$("power").addEventListener("click", async () => {
+  await invoke("set_enabled", { on: state.settings.enabled === false });
+  await load();
+});
+
+$("compact").addEventListener("click", () => invoke("conversation", { action: "compact" }).catch((e) => addLine({ kind: "error", text: String(e), at: Date.now() / 1000 })));
+
+// Clearing deletes the conversation, so it takes a second click within three seconds.
+let clearTimer = null;
+$("clear").addEventListener("click", async () => {
+  const b = $("clear");
+  if (!clearTimer) {
+    b.textContent = "Clear? Click again";
+    b.classList.add("confirm");
+    clearTimer = setTimeout(() => { b.textContent = "Clear"; b.classList.remove("confirm"); clearTimer = null; }, 3000);
+    return;
+  }
+  clearTimeout(clearTimer);
+  clearTimer = null;
+  b.textContent = "Clear";
+  b.classList.remove("confirm");
+  await invoke("conversation", { action: "clear" }).catch((e) => addLine({ kind: "error", text: String(e), at: Date.now() / 1000 }));
+});
+
+function serverRow(ep = { url: "", token: "" }) {
+  const url = el("input", { class: "url", placeholder: "http://trixie.local:35830/mcp" });
+  const token = el("input", { class: "token", type: "password", autocomplete: "off", placeholder: "Token, if needed" });
+  url.value = ep.url || "";
+  token.value = ep.token || "";
+  const row = el("div", { class: "server" }, url, token);
+  const remove = el("button", { type: "button" }, "Remove");
+  remove.addEventListener("click", () => row.remove());
+  row.append(remove);
+  return row;
+}
+
+$("add-server").addEventListener("click", () => $("servers").append(serverRow()));
 
 // The settings dialog: a field named "a.b" is the setting a.b.
 function fields() {
@@ -90,6 +142,7 @@ function openSettings() {
   $("context-note").textContent = state.settings.context_size == null && state.size
     ? `The server reports ${state.size} tokens. Leave empty to use it.`
     : "Leave empty to use the size the server reports.";
+  $("servers").replaceChildren(...(state.settings.tools || []).map(serverRow));
   $("form-error").textContent = "";
   $("models-note").textContent = "";
   $("settings").showModal();
@@ -128,6 +181,9 @@ $("form").addEventListener("submit", async (ev) => {
       : f.name === "instant_replies" ? v.split("\n").map((p) => p.trim()).filter(Boolean)
       : v;
   }
+  s.tools = [...$("servers").querySelectorAll(".server")]
+    .map((r) => ({ url: r.querySelector(".url").value.trim(), token: r.querySelector(".token").value.trim() }))
+    .filter((t) => t.url);
   try {
     await invoke("save_settings", { settings: s });
     $("settings").close();

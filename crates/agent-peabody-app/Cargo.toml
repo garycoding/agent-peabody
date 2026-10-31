@@ -20,6 +20,6 @@ workspace = true
 [dependencies]
 agent-peabody-core = { version = "0.0.0", path = "../agent-peabody-core" }
 serde = { version = "1", features = ["derive"] }
-tauri = "2"
+tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 tokio = { version = "1", features = ["sync"] }
