@@ -1,0 +1,27 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Gary Frattarola <garyf@parkviewlab.ai>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Submits the disk image to Apple's notary service, waits for the verdict, and
+# staples the ticket to the image. Needs APPLE_API_KEY (the path of the .p8 key),
+# APPLE_API_KEY_ID and APPLE_API_ISSUER.
+set -e
+cd "$(dirname "$0")/.."
+VERSION=$(tr -d '[:space:]' < VERSION.txt)
+DMG="dist/agent-peabody-$VERSION-macos-arm64.dmg"
+: "${APPLE_API_KEY:?the path of the App Store Connect API key}"
+: "${APPLE_API_KEY_ID:?the key id}"
+: "${APPLE_API_ISSUER:?the issuer id}"
+xcrun notarytool submit "$DMG" --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" \
+  --wait --timeout 60m --output-format json > notarization.json
+cat notarization.json
+STATUS=$(python3 -c 'import json; print(json.load(open("notarization.json"))["status"])')
+if [ "$STATUS" != "Accepted" ]; then
+  ID=$(python3 -c 'import json; print(json.load(open("notarization.json"))["id"])')
+  xcrun notarytool log "$ID" --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" || true
+  echo "notarization status: $STATUS" >&2
+  exit 1
+fi
+xcrun stapler staple "$DMG"
+xcrun stapler validate "$DMG"
+spctl --assess --type open --context context:primary-signature --verbose "$DMG"
