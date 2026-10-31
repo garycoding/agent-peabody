@@ -77,6 +77,8 @@ Tools and controls, by the owner on 2026-10-31:
 
 - **Fresh connections to MCP servers (v0.5.1):** a weather call sent 5 s after the tool list never reached aqua-roaming: uvicorn closes an idle connection after 5 s, and Peabody reused the pooled connection just as it closed ("error sending request"). MCP requests now go on a fresh connection each (about a millisecond on the LAN), and a request that fails to send, or whose connection closes unanswered, is sent once more.
 
+- **Commands do not wait (v0.5.2):** Clear did nothing for minutes while Peabody's question waited behind another client's requests to LM Studio, since commands ran only between answers. A command now abandons the question in hand (an unanswered question is not kept) and runs at once.
+
 Made during the build, within these rulings:
 
 - The tokens counted towards the window exclude the reasoning's, since the reasoning is not kept; counting them would summarise far too soon (found in the live test).
