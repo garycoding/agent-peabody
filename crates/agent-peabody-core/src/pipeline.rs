@@ -134,6 +134,9 @@ impl Pipeline {
         self.learn_context().await;
         self.report_context();
         self.prepare_instant_replies().await;
+        // Found again with each question; looked for now so that the window shows whether
+        // the servers answer.
+        self.offer_tools().await;
     }
 
     /// Asks phonorheos to make and keep the instant replies' speech, unheard.
