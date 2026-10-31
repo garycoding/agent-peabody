@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Gary Frattarola <garyf@parkviewlab.ai>
+SPDX-License-Identifier: CC-BY-4.0
+-->
+
 # Why Peabody is as it is
 
 The README says what Peabody is and how it is used. This file records why: the requirements it was built to, the evidence gathered during the build, and the decisions, each with its date.
@@ -28,7 +33,7 @@ Given by the owner in conversation on 2026-10-31.
 
 ### The live test (pacific, 2026-10-31)
 
-- Peabody's listen request made graptostream listen in its automatic mode, and Peabody was listed among its readers.
+- Peabody's listen request made graptostream listen in its When asked mode, and Peabody was listed among its readers.
 - Speech played through the speaker did not test addressing: the speech engine dropped or misheard the leading "Peabody" in each of five attempts, in three voices, with a video playing in the room ("Hmm. Peabody" was heard as "Hey buddy"). Addressing awaits the owner's own voice; the rest of the chain was tested with a stand-in graptostream that delivers typed utterances.
 - With LM Studio and phonorheos: answers were spoken in `bm_lewis`; a follow-up was answered from the kept conversation; the conversation survived a restart; with the context size set to 800, the conversation was summarised at 75%, the last four exchanges were kept, and a question about the first exchange was answered from the summary.
 
@@ -38,7 +43,7 @@ All by the owner on 2026-10-31.
 
 - **D1 Name:** the name setting is the app name Peabody reads from graptostream (`/events?to=<name>`), `peabody` by default; the owner maps the spoken name to it in graptostream. graptostream already matches names loosely and removes them, and has no endpoint through which another app could register a name.
 - **D2 Signing:** the macOS build is signed and notarised in CI with the five Apple secrets, once they are added to this repository (a `garycoding` repository does not receive ParkviewLab's organisation secrets). Amended the same day: v0.1.0 ships unsigned.
-- **D3 Merges:** the session merges each pull request once its checks have passed; the owner asked for v0.1.0 to be released without waiting for him.
+- **D3 Merges:** the session merges each pull request once its checks have passed; v0.1.0 was to be released without a further review.
 - **D4 Persistence:** the conversation is kept in the data folder and survives a restart.
 - **D5 Compaction:** the last four exchanges are kept word for word.
 - **D6 System prompt:** a default asking for short answers in plain spoken sentences, editable in the settings.
@@ -53,3 +58,4 @@ Made during the build, within these rulings:
 - The tokens counted towards the window exclude the reasoning's, since the reasoning is not kept; counting them would summarise far too soon (found in the live test).
 - When the model cannot be reached, Peabody says "I could not get an answer from the model." and does not keep the unanswered question, so that the exchanges stay paired.
 - The voices are phonorheos's 28 Kokoro voices, listed in Peabody, since phonorheos has no endpoint that lists them.
+- A graptostream stream silent for 45 s (three missed keep-alives) is reconnected, since a LAN link that drops without closing would otherwise leave Peabody deaf; a chat request is given up after 15 minutes, well beyond the eight minutes a long answer took on pacific (from the code review).

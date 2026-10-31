@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Gary Frattarola <garyf@parkviewlab.ai>
+SPDX-License-Identifier: CC-BY-4.0
+-->
+
 # Peabody user manual
 
 Peabody lets you talk to a language model aloud. You speak to it through graptostream, which turns your speech into text, and it answers through phonorheos, which turns its answer into speech. This manual covers setting it up and using it; the [README](../README.md) describes how it works.
@@ -32,7 +37,7 @@ Peabody remembers the conversation, including after it is closed and reopened. T
 | Name | The app name graptostream addresses your speech to (`peabody`). It must match the app name in graptostream's Spoken names. |
 | Voice | The phonorheos voice Peabody speaks with. `bm_` and `bf_` voices are British, `am_` and `af_` American. |
 | System prompt | The instructions the model is given before the conversation. The default asks for short answers in plain spoken sentences. |
-| graptostream address and token | Where graptostream answers: `http://127.0.0.1:35860` on this Mac, or `http://<mac>.local:35860` with a token issued in graptostream's Network settings. |
+| graptostream address and token | Where graptostream answers: `http://127.0.0.1:35860` on this Mac, or `http://<mac>.local:35860` with a token issued in graptostream's Settings › Network, with serving to other machines switched on there. |
 | phonorheos address and token | Where phonorheos answers: `http://127.0.0.1:35861` on this machine, or `http://<machine>.local:35861` with a token issued in phonorheos's Network section, with "Open to the LAN" ticked. |
 | Model server address and token | For LM Studio, `http://127.0.0.1:1234` (or `http://<machine>.local:1234` with "Serve on local network" on); for llama.cpp, the address `llama-server` listens on. A token only where the server is set to require one. |
 | Model | The model's name as the server gives it. List models asks the server. |
@@ -46,8 +51,8 @@ Saving the settings reconnects at once.
 - **Peabody says "I could not get an answer from the model."** The model server could not be reached or refused the request; the window says why.
 - **Peabody says "I have no answer to that."** The model returned an empty answer. With a reasoning model, this can mean that its reasoning used up the space for the answer.
 - **Nothing happens when you speak.** Check that graptostream heard you in its own window, and that the line was addressed to Peabody's name. A name the speech engine mishears is better replaced by an ordinary, distinct word.
-- **Answers are slow.** A reasoning model thinks before it answers; on a small machine that can take minutes.
+- **Answers are slow.** A reasoning model writes out its reasoning before the answer; on a small machine that can take minutes.
 
 ## Privacy
 
-What you say to Peabody goes to the model server, and the answers to phonorheos. The conversation and the settings, tokens included, are kept in Peabody's data folder, readable by your account alone (the window's last line gives the folder).
+What you say to Peabody goes to the model server, and the answers to phonorheos. The conversation and the settings, tokens included, are kept in Peabody's data folder, readable by your account alone: `~/Library/Application Support/io.github.garycoding.agent-peabody/` on macOS and `~/.local/share/io.github.garycoding.agent-peabody/` on Linux (the window's last line gives the folder).
