@@ -1047,3 +1047,31 @@ async fn a_long_tool_result_is_not_kept_in_the_conversation() {
     p.answer("and?").await;
     assert_eq!(p.conversation.messages[3].content, "Fine.");
 }
+
+#[tokio::test]
+async fn lists_models_from_a_server_that_wants_a_version_header() {
+    // Anthropic's models endpoint answers 400 without `anthropic-version`.
+    let app = Router::new().route(
+        "/v1/models",
+        get(|h: HeaderMap| async move {
+            if h.contains_key("anthropic-version") {
+                (
+                    StatusCode::OK,
+                    axum::Json(
+                        json!({"data": [{"id": "claude-haiku-5-5"}, {"id": "claude-sonnet-5-5"}]}),
+                    ),
+                )
+            } else {
+                (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(
+                        json!({"error": {"message": "anthropic-version: header is required"}}),
+                    ),
+                )
+            }
+        }),
+    );
+    let ep = serve(app).await;
+    let models = agent_peabody_core::llm::models(&agent_peabody_core::http::client(), &ep).await;
+    assert_eq!(models.unwrap(), ["claude-haiku-5-5", "claude-sonnet-5-5"]);
+}

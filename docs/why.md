@@ -84,6 +84,8 @@ Tools and controls, by the owner on 2026-10-31:
 
 - **D21 Short tool results kept (owner, 2026-10-31):** a tool result of 500 characters or less is kept in the conversation after the answer it served, as "[<tool> said: …]". Asked the time in Seoul, the model answered "10:45 a.m." from `current_time`, leaving out that it was already Sunday there; asked "what day is it there?", it had only its own answer and said Saturday. Long results (search, fetch) stay out, to spare the context window.
 
+- **Models request carries a version header (v0.7.1):** connecting to Anthropic (2026-10-31), "List models" and the periodic model check failed with 400 "anthropic-version: header is required", although Anthropic's page calls the header optional and chat works without it; the models request now sends `anthropic-version: 2023-06-01`, which LM Studio and llama.cpp ignore. The window's top bar also sits above the list (`z-index`), since the time labels, which have `opacity`, painted over it when the list scrolled under it.
+
 Made during the build, within these rulings:
 
 - The tokens counted towards the window exclude the reasoning's, since the reasoning is not kept; counting them would summarise far too soon (found in the live test).
