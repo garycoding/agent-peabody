@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.7.1] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Bug fixes
+
+- Send anthropic-version on the models request, and keep the top bar above the list (#25)
+
 ## [v0.7.0] - 2026-10-31
 
 ### Highlights
