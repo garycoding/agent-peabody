@@ -39,6 +39,8 @@ pub struct Reply {
     pub reasoning: String,
     /// The server's token counts, as it reported them.
     pub usage: Value,
+    /// Why the reply ended (`stop`, `length`, `tool_calls`…), as the server gave it.
+    pub finish_reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,12 +116,26 @@ pub fn parse_reply(v: &Value) -> Reply {
             .trim()
             .to_string(),
         usage: u.clone(),
+        finish_reason: v["choices"][0]["finish_reason"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
     }
 }
 
 /// How long an answer may take: a reasoning model on a small machine took eight minutes
 /// for one long answer, so the limit only catches a server that never answers.
 pub const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Whether the server is Anthropic's, whose Claude 5 models think by default through its
+/// OpenAI-compatible layer, which ignores `reasoning_effort`.
+pub fn is_anthropic(ep: &Endpoint) -> bool {
+    ep.url
+        .split("://")
+        .last()
+        .and_then(|rest| rest.split('/').next())
+        .is_some_and(|host| host == "anthropic.com" || host.ends_with(".anthropic.com"))
+}
 
 pub async fn chat(
     c: &reqwest::Client,
@@ -129,7 +145,43 @@ pub async fn chat(
     messages: &impl Serialize,
     tools: &[Value],
 ) -> Result<Reply, Error> {
+    chat_with(c, ep, model, think, is_anthropic(ep), messages, tools).await
+}
+
+/// As [`chat`], and where `thinking_field` is set with thinking off, also sends
+/// `thinking: {"type": "disabled"}`; a server that answers 400 naming `thinking` is asked
+/// again without it, so that a model that rejects the field still answers.
+pub async fn chat_with(
+    c: &reqwest::Client,
+    ep: &Endpoint,
+    model: &str,
+    think: bool,
+    thinking_field: bool,
+    messages: &impl Serialize,
+    tools: &[Value],
+) -> Result<Reply, Error> {
+    let off = !think && thinking_field;
+    match send(c, ep, model, think, off, messages, tools).await {
+        Err(Error::Other(e)) if off && e.starts_with("answered 400") && e.contains("thinking") => {
+            send(c, ep, model, think, false, messages, tools).await
+        }
+        r => r,
+    }
+}
+
+async fn send(
+    c: &reqwest::Client,
+    ep: &Endpoint,
+    model: &str,
+    think: bool,
+    thinking_disabled: bool,
+    messages: &impl Serialize,
+    tools: &[Value],
+) -> Result<Reply, Error> {
     let mut body = json!({ "messages": messages, "stream": false });
+    if thinking_disabled {
+        body["thinking"] = json!({"type": "disabled"});
+    }
     if !model.is_empty() {
         body["model"] = json!(model);
     }
@@ -242,6 +294,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_anthropics_own_address_is_anthropic() {
+        let is = |u: &str| is_anthropic(&Endpoint::new(u));
+        assert!(is("https://api.anthropic.com"));
+        assert!(is("https://api.anthropic.com/"));
+        assert!(!is("http://127.0.0.1:1234"));
+        assert!(!is("http://pacific.local:1234"));
+        assert!(!is("https://anthropic.com.evil.example"));
+        assert!(!is("https://notanthropic.com"));
+    }
+
+    #[test]
     fn keeps_the_answer_and_leaves_out_the_reasoning() {
         let v = json!({
             "choices": [{"message": {"content": "Four.", "reasoning_content": "two and two"}}],
@@ -255,6 +318,7 @@ mod tests {
                 tool_calls: vec![],
                 reasoning: "two and two".into(),
                 usage: json!({"prompt_tokens": 19, "completion_tokens": 7, "total_tokens": 26}),
+                finish_reason: String::new(),
             }
         );
         let v = json!({"choices": [{"message": {"content": "<think>hmm</think>\n\nFour."}}],
@@ -267,6 +331,7 @@ mod tests {
                 tool_calls: vec![],
                 reasoning: String::new(),
                 usage: json!({"prompt_tokens": 10, "completion_tokens": 5}),
+                finish_reason: String::new(),
             }
         );
         let v = json!({"choices": [{"message": {"content": "<think>still thinking"}}]});
@@ -278,6 +343,7 @@ mod tests {
                 tool_calls: vec![],
                 reasoning: String::new(),
                 usage: Value::Null,
+                finish_reason: String::new(),
             }
         );
         let v = json!({"choices": [{"message": {"content": "<|channel>s_thought\n<channel|>Trees are old."}}]});

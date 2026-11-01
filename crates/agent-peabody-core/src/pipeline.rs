@@ -26,8 +26,14 @@ use tokio::task::JoinHandle;
 /// Spoken when the model returns an empty answer.
 pub const NO_ANSWER: &str = "I have no answer to that.";
 /// The most rounds of tool calls for one question; after them the model is asked to
-/// answer with what it has, so that a model that keeps searching cannot loop.
-pub const MAX_TOOL_ROUNDS: usize = 4;
+/// answer with what it has, so that a model that keeps searching cannot loop. Eight: one
+/// question about a poem took a refused page, a search, another refused page and a page
+/// that worked, and four rounds ran out one step short of an answer.
+pub const MAX_TOOL_ROUNDS: usize = 8;
+/// Said to the model, for that request only, when its tool rounds are used up.
+pub const LAST_ROUND: &str = "You have used all the tool calls allowed for this question. \
+Answer now, in plain spoken sentences, from what you have found; if it was not enough, say \
+what you could not find.";
 /// The longest tool result kept in the conversation with the answer it served, in
 /// characters: a time, a weather report or a calculation, but not search results or a
 /// fetched page, which would fill a small context window.
@@ -251,7 +257,11 @@ impl Pipeline {
                 self.conversation.tokens = r.total_tokens;
                 let text = if r.content.is_empty() {
                     (self.emit)(Event::Error {
-                        text: "The model returned no answer.".into(),
+                        text: match r.finish_reason.as_str() {
+                            "length" => "The model used its whole output allowance without answering (hidden thinking?).".to_string(),
+                            "" => "The model returned no answer.".to_string(),
+                            f => format!("The model returned no answer (it ended with: {f})."),
+                        },
                     });
                     NO_ANSWER.to_string()
                 } else {
@@ -311,6 +321,9 @@ impl Pipeline {
         self.kept.clear();
         for round in 0..=MAX_TOOL_ROUNDS {
             let offer: &[Value] = if round < MAX_TOOL_ROUNDS { &tools } else { &[] };
+            if round == MAX_TOOL_ROUNDS && !tools.is_empty() {
+                messages.push(json!({"role": "user", "content": LAST_ROUND}));
+            }
             let r = self.chat(&messages, offer, "").await?;
             if r.tool_calls.is_empty() || offer.is_empty() {
                 return Ok(r);
@@ -666,6 +679,9 @@ fn show_reply(r: &llm::Reply) -> String {
     }
     for c in &r.tool_calls {
         out.push(format!("[asks for]\n{}", show_call(c)));
+    }
+    if !r.finish_reason.is_empty() {
+        out.push(format!("[ended]\n{}", r.finish_reason));
     }
     let u = &r.usage;
     let n = |k: &str| u[k].as_u64().map(|v| v.to_string());
