@@ -12,7 +12,7 @@ How to use it: the [user manual](docs/user-manual.md).
 
 ## Status
 
-Tried on a MacBook Air (macOS 26) with graptostream, phonorheos and LM Studio (`google/gemma-4-12b`): answers spoken, the conversation kept across questions and across a restart, and compacted when it filled three quarters of the context window. Addressing by the spoken name "Peabody" through graptostream has not yet been tried with a person's voice. The Linux packages are built on Ubuntu 24.04 and have not yet been tried on a desktop. The macOS build is signed ad hoc only: not with a Developer ID, and not notarised.
+In daily use on a MacBook Air M5 (macOS 26) with graptostream, phonorheos and LM Studio (`google/gemma-4-12b`), addressed by the spoken name "Peabody" through graptostream: answers spoken, the conversation kept across questions and across a restart, and compacted when it filled three quarters of the context window. The Linux packages are built on Ubuntu 24.04 and have not yet been tried on a desktop. The macOS build is signed ad hoc only: not with a Developer ID, and not notarised.
 
 ## Requirements and install
 
