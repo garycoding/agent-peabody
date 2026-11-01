@@ -39,14 +39,15 @@ impl Say {
     };
 }
 
-/// Queues `text` in `voice`; returns once phonorheos has queued it, not when it is spoken.
+/// Queues `text` in `voice`; returns once phonorheos has queued it, not when it is spoken,
+/// with the item's id, by which it can be withdrawn.
 pub async fn speak(
     c: &reqwest::Client,
     ep: &Endpoint,
     text: &str,
     voice: &str,
     say: Say,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let mut body =
         json!({ "text": text, "client": CLIENT, "speak": say.speak, "cache": say.cache });
     if !voice.is_empty() {
@@ -57,10 +58,24 @@ pub async fn speak(
         .send()
         .await
         .map_err(|e| http::describe(&e))?;
-    if r.status().is_success() {
-        Ok(())
-    } else {
-        Err(format!("answered {}", r.status()))
+    if !r.status().is_success() {
+        return Err(format!("answered {}", r.status()));
+    }
+    let v: serde_json::Value = r.json().await.unwrap_or_default();
+    Ok(v["id"].as_str().map(str::to_string))
+}
+
+/// Withdraws an item, stopping it if it is being spoken; whether it was still there
+/// (phonorheos answers 404 for one already spoken).
+pub async fn withdraw(c: &reqwest::Client, ep: &Endpoint, id: &str) -> Result<bool, String> {
+    let r = http::request(c, Method::DELETE, ep, &format!("/speak/{id}"))
+        .send()
+        .await
+        .map_err(|e| http::describe(&e))?;
+    match r.status() {
+        s if s.is_success() => Ok(true),
+        reqwest::StatusCode::NOT_FOUND => Ok(false),
+        s => Err(format!("answered {s}")),
     }
 }
 
