@@ -83,6 +83,11 @@ fn strip_thinking(s: &str) -> &str {
     if let Some(rest) = t.strip_prefix("<think>") {
         return rest.split_once("</think>").map_or("", |(_, after)| after);
     }
+    // Gemma 4's thinking channel, which LM Studio sometimes leaves in the content
+    // ("<|channel>s_thought\n<channel|>Trees are…"); phonorheos read it aloud.
+    if let Some(rest) = t.strip_prefix("<|channel>") {
+        return rest.split_once("<channel|>").map_or("", |(_, after)| after);
+    }
     s
 }
 
@@ -272,6 +277,8 @@ mod tests {
                 usage: Value::Null,
             }
         );
+        let v = json!({"choices": [{"message": {"content": "<|channel>s_thought\n<channel|>Trees are old."}}]});
+        assert_eq!(parse_reply(&v).content, "Trees are old.");
         // The reasoning's tokens are not counted, as LM Studio reports them for Gemma.
         let v = json!({"choices": [{"message": {"content": "Four."}}],
                        "usage": {"prompt_tokens": 569, "completion_tokens": 3797, "total_tokens": 4366,

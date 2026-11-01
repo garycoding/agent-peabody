@@ -79,6 +79,9 @@ Tools and controls, by the owner on 2026-10-31:
 
 - **Commands do not wait (v0.5.2):** Clear did nothing for minutes while Peabody's question waited behind another client's requests to LM Studio, since commands ran only between answers. A command now abandons the question in hand (an unanswered question is not kept) and runs at once.
 
+- **D20 Hush (v0.6.0):** the owner interrupts Peabody with "<spoken name> hush". graptostream (v0.3.0) decides who is interrupted and sends an `event: hush` to that app, from provisional text, and does not address "<name> hush" utterances; Peabody decides what it means: it withdraws its own phonorheos items, abandons an answer in progress, marks a cut-off answer "(interrupted)", and ignores a hush more than 2 s old (graptostream replays missed events after a reconnection). "Stop" was rejected because it begins real requests ("stop the build"); echo cancellation because Peabody may speak through any machine on the LAN and Peabodies are to hear one another. Probe tests (2026-10-31): stopped within milliseconds of the words being heard, also mid-sentence; the name was heard 1 in 3 times as "Peabody", about 5 in 7 as "Jarvis", 9 in 9 as "Aristotle".
+- **Gemma's channel markers stripped (v0.6.0):** an answer began "<|channel>s_thought<channel|>…" and phonorheos read the markers aloud; they are now removed like a `<think>` block.
+
 Made during the build, within these rulings:
 
 - The tokens counted towards the window exclude the reasoning's, since the reasoning is not kept; counting them would summarise far too soon (found in the live test).

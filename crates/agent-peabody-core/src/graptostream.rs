@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Gary Frattarola <garyf@parkviewlab.ai>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Hearing through graptostream: a listen request held for as long as Peabody runs, and
-//! the final utterances addressed to Peabody's name, read from `/events` as Server-Sent
+//! Hearing through graptostream: a listen request held for as long as Peabody runs, the
+//! hushes addressed to it, and the final utterances addressed to Peabody's name, read from `/events` as Server-Sent
 //! Events and resumed from the last event after a reconnection.
 
 use crate::http;
@@ -96,6 +96,56 @@ pub fn utterance(ev: &Event, name: &str) -> Option<String> {
     .then(|| text.to_string())
 }
 
+/// How old a hush may be and still be obeyed: graptostream replays missed events after a
+/// reconnection, and an old hush must not silence a new answer.
+pub const HUSH_FRESH: Duration = Duration::from_secs(2);
+
+/// Whether an event is a fresh hush addressed to `name` ("<spoken name> hush", from
+/// graptostream's interrupt word), judged by the end of the speech that carried it.
+pub fn hush(ev: &Event, name: &str, now: std::time::SystemTime) -> bool {
+    if ev.event.as_deref() != Some("hush") {
+        return false;
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&ev.data) else {
+        return false;
+    };
+    if !v["to"]
+        .as_str()
+        .is_some_and(|t| t.eq_ignore_ascii_case(name))
+    {
+        return false;
+    }
+    match v["end"].as_str().and_then(parse_utc) {
+        Some(end) => now
+            .duration_since(end)
+            .map_or(true, |age| age <= HUSH_FRESH),
+        None => true,
+    }
+}
+
+/// A UTC time as graptostream writes it, "2026-11-01T00:58:39.350Z".
+fn parse_utc(s: &str) -> Option<std::time::SystemTime> {
+    let s = s.strip_suffix('Z')?;
+    let (date, time) = s.split_once('T')?;
+    let mut d = date.split('-').map(|x| x.parse::<i64>());
+    let (y, m, day) = (d.next()?.ok()?, d.next()?.ok()?, d.next()?.ok()?);
+    let (hms, frac) = time.split_once('.').unwrap_or((time, "0"));
+    let mut t = hms.split(':').map(|x| x.parse::<i64>());
+    let (h, min, sec) = (t.next()?.ok()?, t.next()?.ok()?, t.next()?.ok()?);
+    let millis: f64 = format!("0.{frac}").parse().ok()?;
+    // Days from 1970-01-01 to the civil date (Howard Hinnant's algorithm).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let secs = days * 86_400 + h * 3_600 + min * 60 + sec;
+    let since = Duration::from_secs(u64::try_from(secs).ok()?) + Duration::from_secs_f64(millis);
+    Some(std::time::UNIX_EPOCH + since)
+}
+
 /// The state of a connection, reported to the window.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Link {
@@ -108,12 +158,13 @@ pub enum Link {
 const IDLE: Duration = Duration::from_secs(45);
 
 /// Reads Peabody's utterances for ever, reconnecting after a failure (1 s, doubling to
-/// 30 s) and resuming from the last event seen.
+/// 30 s) and resuming from the last event seen. A fresh hush calls `hushed`.
 pub async fn read_utterances(
     c: reqwest::Client,
     ep: Endpoint,
     name: String,
     utterances: mpsc::UnboundedSender<String>,
+    hushed: impl Fn() + Send + 'static,
     link: impl Fn(Link) + Send + 'static,
 ) {
     let mut last_id: Option<String> = None;
@@ -142,6 +193,9 @@ pub async fn read_utterances(
                             for ev in parser.push(&bytes) {
                                 if ev.id.is_some() {
                                     last_id.clone_from(&ev.id);
+                                }
+                                if hush(&ev, &name, std::time::SystemTime::now()) {
+                                    hushed();
                                 }
                                 if let Some(u) = utterance(&ev, &name)
                                     && utterances.send(u).is_err()
@@ -251,6 +305,43 @@ impl Listen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fresh_hush_for_this_app_is_obeyed_and_an_old_or_other_one_is_not() {
+        let end = parse_utc("2026-11-01T00:58:39.350Z").unwrap();
+        assert_eq!(
+            end.duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            1_793_494_719_350
+        );
+        let hush_for = |to: &str| Event {
+            id: Some("1107".into()),
+            event: Some("hush".into()),
+            data: format!(
+                r#"{{"kind":"hush","to":"{to}","end":"2026-11-01T00:58:39.350Z","text":"hush"}}"#
+            ),
+        };
+        let soon = end + Duration::from_millis(400);
+        assert!(hush(&hush_for("peabody"), "peabody", soon));
+        assert!(!hush(&hush_for("scrinotia"), "peabody", soon));
+        assert!(
+            !hush(
+                &hush_for("peabody"),
+                "peabody",
+                end + Duration::from_secs(3)
+            ),
+            "a replayed hush is stale"
+        );
+        let mut seg = hush_for("peabody");
+        seg.event = Some("segment".into());
+        assert!(!hush(&seg, "peabody", soon));
+        assert_eq!(
+            utterance(&hush_for("peabody"), "peabody"),
+            None,
+            "a hush is no utterance"
+        );
+    }
 
     #[test]
     fn parses_events_split_across_chunks() {

@@ -154,6 +154,9 @@ fn model_app(m: Model) -> Router {
 #[derive(Clone, Default)]
 struct Voice {
     said: Arc<Mutex<Vec<Value>>>,
+    /// The ids withdrawn, and which of them were still there (not yet finished).
+    withdrawn: Arc<Mutex<Vec<String>>>,
+    finished: Arc<Mutex<Vec<String>>>,
 }
 
 fn voice_app(v: Voice) -> Router {
@@ -162,11 +165,26 @@ fn voice_app(v: Voice) -> Router {
             "/speak",
             post(
                 |State(v): State<Voice>, axum::Json(body): axum::Json<Value>| async move {
-                    v.said.lock().unwrap().push(body);
+                    let mut said = v.said.lock().unwrap();
+                    said.push(body);
+                    let id = format!("i{}", said.len());
                     (
                         StatusCode::CREATED,
-                        axum::Json(json!({"id": "i", "event": 1, "ahead": 0})),
+                        axum::Json(json!({"id": id, "event": 1, "ahead": 0})),
                     )
+                },
+            ),
+        )
+        .route(
+            "/speak/{id}",
+            axum::routing::delete(
+                |State(v): State<Voice>, Path(id): Path<String>| async move {
+                    v.withdrawn.lock().unwrap().push(id.clone());
+                    if v.finished.lock().unwrap().contains(&id) {
+                        StatusCode::NOT_FOUND
+                    } else {
+                        StatusCode::NO_CONTENT
+                    }
                 },
             ),
         )
@@ -218,6 +236,7 @@ async fn hears_only_its_own_name_and_resumes_after_a_reconnection() {
         ep,
         "peabody".into(),
         tx,
+        || {},
         move |s| l.lock().unwrap().push(s),
     ));
     assert_eq!(rx.recv().await.unwrap(), "what is two plus two?");
@@ -861,4 +880,142 @@ async fn clear_and_compact_do_not_wait_for_a_slow_answer() {
             .messages
             .is_empty()
     );
+}
+
+fn hush_event(id: u32, to: &str, end: std::time::SystemTime) -> String {
+    let secs = end
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    // graptostream's ISO form, from the epoch seconds (UTC).
+    let t = time_utc(secs);
+    let data = json!({"id": id, "kind": "hush", "state": "provisional", "text": "hush", "to": to, "end": t});
+    format!("id: {id}\nevent: hush\ndata: {data}\n\n")
+}
+
+/// Epoch seconds as "YYYY-MM-DDThh:mm:ss.mmmZ" (civil-from-days).
+fn time_utc(secs: f64) -> String {
+    let total = secs.floor() as i64;
+    let millis = ((secs - secs.floor()) * 1000.0).round() as i64;
+    let (days, rem) = (total.div_euclid(86_400), total.rem_euclid(86_400));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{millis:03}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+#[tokio::test]
+async fn a_hush_withdraws_the_answer_and_marks_it_interrupted() {
+    let (model, voice) = (Model::default(), Voice::default());
+    model
+        .replies
+        .lock()
+        .unwrap()
+        .push(reply("A very long story about a duck.", 80));
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, events) = collect();
+    let s = Settings {
+        instant_replies: vec!["One moment.".into()],
+        ..settings(&model, &voice).await
+    };
+    let mut p = Pipeline::new(s, dir.path().join("c.json"), emit);
+    p.answer("tell me a story").await;
+    // i1 is the instant reply (already spoken), i2 the answer (still playing).
+    voice.finished.lock().unwrap().push("i1".into());
+    p.run(pipeline::Command::Hush).await;
+    assert_eq!(*voice.withdrawn.lock().unwrap(), ["i1", "i2"]);
+    assert_eq!(
+        p.conversation.messages.last().unwrap().content,
+        "A very long story about a duck. (interrupted)"
+    );
+    assert!(events.lock().unwrap().contains(&Event::Hushed {
+        text: "Hushed; the answer was cut off.".into()
+    }));
+    // A second hush has nothing left to withdraw and marks nothing.
+    p.run(pipeline::Command::Hush).await;
+    assert_eq!(voice.withdrawn.lock().unwrap().len(), 2);
+    assert!(
+        p.conversation
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .ends_with("duck. (interrupted)")
+    );
+}
+
+#[tokio::test]
+async fn a_hush_from_graptostream_abandons_a_question_still_waiting_for_the_model() {
+    let (g, model, voice) = (Grapto::default(), Model::default(), Voice::default());
+    *model.delay.lock().unwrap() = Duration::from_secs(60);
+    let mut s = Settings {
+        instant_replies: vec!["One moment.".into()],
+        ..settings(&model, &voice).await
+    };
+    s.graptostream = serve(grapto_app(g.clone())).await;
+    g.bodies
+        .lock()
+        .unwrap()
+        .push(segment(1, "tell me a long story", "peabody"));
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, events) = collect();
+    let running = pipeline::start(s, dir.path().join("c.json"), emit, Timing::default());
+    wait_for(|| !model.requests.lock().unwrap().is_empty()).await;
+    // The reader reconnects and the next body carries the hush, said just now.
+    g.bodies
+        .lock()
+        .unwrap()
+        .push(hush_event(2, "peabody", std::time::SystemTime::now()));
+    wait_for(|| {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Event::Hushed { .. }))
+    })
+    .await;
+    running.stop().await;
+    let ev = events.lock().unwrap();
+    assert!(ev.contains(&Event::Notice {
+        text: "The question in hand was abandoned.".into()
+    }));
+    // i1 was the phrase prepared at start-up, i2 the instant reply; no answer was spoken.
+    assert_eq!(*voice.withdrawn.lock().unwrap(), ["i2"]);
+    assert_eq!(voice.said.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn an_old_hush_replayed_after_a_reconnection_is_ignored() {
+    let (g, model, voice) = (Grapto::default(), Model::default(), Voice::default());
+    let mut s = settings(&model, &voice).await;
+    s.graptostream = serve(grapto_app(g.clone())).await;
+    let old = std::time::SystemTime::now() - Duration::from_secs(30);
+    g.bodies
+        .lock()
+        .unwrap()
+        .push(hush_event(1, "peabody", old) + &segment(2, "what is two plus two?", "peabody"));
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, events) = collect();
+    let running = pipeline::start(s, dir.path().join("c.json"), emit, Timing::default());
+    wait_for(|| !voice.said.lock().unwrap().is_empty()).await;
+    running.stop().await;
+    assert!(
+        !events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Event::Hushed { .. }))
+    );
+    assert_eq!(voice.said.lock().unwrap()[0]["text"], "Fine.");
 }

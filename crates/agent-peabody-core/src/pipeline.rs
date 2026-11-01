@@ -87,6 +87,10 @@ pub enum Event {
     },
     /// The conversation was cleared from the window.
     Cleared,
+    /// The owner said "<name> hush".
+    Hushed {
+        text: String,
+    },
     /// Something the owner asked for that needs saying but is not a problem.
     Notice {
         text: String,
@@ -116,6 +120,9 @@ pub struct Pipeline {
     servers: Vec<Option<mcp::Session>>,
     /// The tools offered for the question in hand.
     offered: Vec<Offered>,
+    /// What phonorheos was given for the question in hand: each item's id, and whether it
+    /// is the answer (rather than the instant reply), so that a hush can withdraw them.
+    spoken: Vec<(String, bool)>,
     emit: Emit,
 }
 
@@ -132,6 +139,7 @@ impl Pipeline {
             last_instant: None,
             servers: Vec::new(),
             offered: Vec::new(),
+            spoken: Vec::new(),
             emit,
         }
     }
@@ -162,8 +170,8 @@ impl Pipeline {
                 Say::PREPARE,
             )
             .await;
-            if r.is_err() {
-                self.link(Service::Phonorheos, r);
+            if let Err(e) = r {
+                self.link(Service::Phonorheos, Err(e));
                 return;
             }
         }
@@ -189,7 +197,10 @@ impl Pipeline {
             Say::INSTANT,
         )
         .await;
-        self.link(Service::Phonorheos, r);
+        if let Ok(Some(id)) = &r {
+            self.spoken.push((id.clone(), false));
+        }
+        self.link(Service::Phonorheos, r.map(|_| ()));
     }
 
     /// The context window's size: the setting's, else the server's.
@@ -202,6 +213,8 @@ impl Pipeline {
     }
 
     pub async fn answer(&mut self, heard: &str) {
+        // Speech from an earlier answer has been spoken, or hushed, by now.
+        self.spoken.clear();
         (self.emit)(Event::Heard { text: heard.into() });
         self.say_instant_reply().await;
         self.conversation.messages.push(Message::new("user", heard));
@@ -263,7 +276,10 @@ impl Pipeline {
             Say::ANSWER,
         )
         .await;
-        self.link(Service::Phonorheos, said);
+        if let Ok(Some(id)) = &said {
+            self.spoken.push((id.clone(), true));
+        }
+        self.link(Service::Phonorheos, said.map(|_| ()));
         if let Some(size) = self.context
             && self.conversation.needs_compaction(size)
         {
@@ -469,7 +485,37 @@ impl Pipeline {
         match c {
             Command::Clear => self.clear(),
             Command::Compact => self.compact_now().await,
+            Command::Hush => self.hush().await,
         }
+    }
+
+    /// Stops Peabody's speech at the owner's "<name> hush": its items are withdrawn from
+    /// phonorheos (other apps' speech is untouched), and an answer cut off mid-speech is
+    /// marked in the conversation, so that the model does not take it as heard.
+    pub async fn hush(&mut self) {
+        let mut cut = false;
+        for (id, is_answer) in std::mem::take(&mut self.spoken) {
+            match phonorheos::withdraw(&self.c, &self.settings.phonorheos, &id).await {
+                Ok(true) if is_answer => cut = true,
+                Ok(_) => {}
+                Err(e) => self.link(Service::Phonorheos, Err(e)),
+            }
+        }
+        if cut {
+            if let Some(m) = self.conversation.messages.last_mut()
+                && m.role == "assistant"
+            {
+                m.content.push_str(" (interrupted)");
+            }
+            self.save();
+        }
+        (self.emit)(Event::Hushed {
+            text: if cut {
+                "Hushed; the answer was cut off.".into()
+            } else {
+                "Hushed.".into()
+            },
+        });
     }
 
     /// Summarises all but the last exchanges; whether it did.
@@ -676,6 +722,8 @@ fn identifier(s: &str) -> String {
 pub enum Command {
     Clear,
     Compact,
+    /// "<name> hush", heard by graptostream.
+    Hush,
 }
 
 /// A tool call as the window shows it: `search: current time in California`.
@@ -787,11 +835,15 @@ pub fn start(settings: Settings, conversation: PathBuf, emit: Emit, timing: Timi
     if settings.enabled {
         tasks.push(tokio::spawn(listen.clone().hold(5.0, timing.renew)));
         let e = emit.clone();
+        let hushes = commands.clone();
         tasks.push(tokio::spawn(graptostream::read_utterances(
             c.clone(),
             settings.graptostream.clone(),
             settings.name.clone(),
             tx,
+            move || {
+                let _ = hushes.send(Command::Hush);
+            },
             move |l| {
                 e(link_event(
                     Service::Graptostream,
