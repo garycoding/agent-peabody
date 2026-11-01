@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.7.0] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Features
+
+- Keep short tool results in the conversation with their answer (#22)
+
 ## [v0.6.0] - 2026-10-31
 
 ### Highlights
