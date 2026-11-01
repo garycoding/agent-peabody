@@ -165,9 +165,12 @@ pub async fn chat(
     Ok(parse_reply(&v))
 }
 
-/// The models the server offers (`GET /v1/models`).
+/// The models the server offers (`GET /v1/models`). Anthropic's server answers 400,
+/// "anthropic-version: header is required", without that header, though its page calls it
+/// optional; LM Studio and llama.cpp ignore it. Chat completions need no such header.
 pub async fn models(c: &reqwest::Client, ep: &Endpoint) -> Result<Vec<String>, String> {
     let r = http::request(c, Method::GET, ep, "/v1/models")
+        .header("anthropic-version", "2023-06-01")
         .send()
         .await
         .map_err(|e| http::describe(&e))?;
