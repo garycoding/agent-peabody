@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.6.0] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Features
+
+- Obey graptostream's hush: stop speaking, abandon, mark interrupted (#21)
+
 ## [v0.5.2] - 2026-10-31
 
 ### Highlights
