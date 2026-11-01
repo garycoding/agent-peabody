@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.7.2] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Bug fixes
+
+- More tool rounds, a forced last answer, thinking off for Anthropic, empty replies explained (#26)
+
 ## [v0.7.1] - 2026-10-31
 
 ### Highlights
