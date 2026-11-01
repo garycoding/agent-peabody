@@ -60,6 +60,8 @@
           <small id="models-note"></small></label>
         <label>Context size <input name="context_size" type="number" min="512" step="1" placeholder="As the server reports it">
           <small id="context-note">Leave empty to use the size the server reports.</small></label>
+        <label>Longest reply (tokens) <input name="max_reply_tokens" type="number" min="0" step="1" placeholder="2048">
+          <small>The most the model may use for one reply, so that a model that loops is stopped within a minute or so; 2048 is about ten minutes of speech. 0 sets no limit. With thinking on, the thinking may count toward it.</small></label>
         <label class="check"><input name="thinking" type="checkbox"> Let the model think before answering
           <small>A reasoning model answers better on hard questions when it may think first, but takes far longer: one short answer took 20 s with thinking and 2 s without.</small></label>
       </fieldset>

@@ -265,6 +265,16 @@ impl Pipeline {
                     });
                     NO_ANSWER.to_string()
                 } else {
+                    if r.finish_reason == "length" {
+                        (self.emit)(Event::Notice {
+                            text: match self.settings.max_reply_tokens {
+                                0 => "The reply was cut at the model's own limit.".to_string(),
+                                n => format!(
+                                    "The reply was cut at the limit of {n} tokens (Settings, Longest reply)."
+                                ),
+                            },
+                        });
+                    }
                     r.content
                 };
                 // Short tool results stay with the answer, so that a follow-up ("what day
@@ -368,6 +378,7 @@ impl Pipeline {
             &self.settings.llm,
             &self.settings.model,
             self.settings.thinking,
+            self.settings.max_reply_tokens,
             &messages,
             tools,
         )

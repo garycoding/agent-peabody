@@ -34,6 +34,10 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = "You are Peabody, a helpful assistant in
 conversation. Your replies are read aloud, so answer briefly, in plain spoken sentences, \
 with no Markdown, lists, headings, code or emoji.";
 
+/// The longest reply asked of the model, in tokens (2026-10-31): about three times the
+/// longest reply seen (Kipling's "If", some 650 tokens), and ten minutes of speech.
+pub const DEFAULT_MAX_REPLY_TOKENS: u32 = 2048;
+
 /// The phrases said at once when an utterance arrives, while the model is asked; the
 /// owner's own (2026-10-31).
 pub const DEFAULT_INSTANT_REPLIES: [&str; 4] = [
@@ -70,6 +74,9 @@ pub struct Settings {
     /// Whether a reasoning model may think before it answers; off by default, since the
     /// thinking made a one-sentence answer take 19.9 s instead of 2.1 s on pacific.
     pub thinking: bool,
+    /// The most tokens the model may use for one reply (`max_tokens`); 0 sets no limit. A
+    /// reasoning model's thinking counts toward it where the server counts it.
+    pub max_reply_tokens: u32,
     /// Said at once on each utterance, one chosen at random, before the answer; phonorheos
     /// keeps their speech so that they play without delay. None turns this off.
     pub instant_replies: Vec<String>,
@@ -89,6 +96,7 @@ impl Default for Settings {
             tools: Vec::new(),
             enabled: true,
             thinking: false,
+            max_reply_tokens: DEFAULT_MAX_REPLY_TOKENS,
             instant_replies: DEFAULT_INSTANT_REPLIES.map(String::from).to_vec(),
         }
     }

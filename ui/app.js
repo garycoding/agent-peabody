@@ -186,6 +186,7 @@ $("form").addEventListener("submit", async (ev) => {
     const v = f.value.trim();
     target[last] =
       f.name === "context_size" ? (v ? Number(v) : null)
+      : f.name === "max_reply_tokens" ? (v === "" ? 2048 : Number(v))
       : f.name === "system_prompt" ? f.value
       : f.name === "instant_replies" ? v.split("\n").map((p) => p.trim()).filter(Boolean)
       : v;
