@@ -1137,6 +1137,60 @@ async fn an_empty_reply_says_why_it_was_empty() {
     );
 }
 
+#[tokio::test]
+async fn a_reply_cut_at_the_limit_is_spoken_and_noted() {
+    let (model, voice) = (Model::default(), Voice::default());
+    model
+        .replies
+        .lock()
+        .unwrap()
+        .push(ended("The first part of a long", "length", 3000));
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, events) = collect();
+    let mut p = Pipeline::new(
+        settings(&model, &voice).await,
+        dir.path().join("c.json"),
+        emit,
+    );
+    p.answer("tell me everything").await;
+    assert_eq!(model.requests.lock().unwrap()[0]["max_tokens"], 2048);
+    assert_eq!(
+        voice.said.lock().unwrap().last().unwrap()["text"],
+        "The first part of a long"
+    );
+    let notes: Vec<String> = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            Event::Notice { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        notes,
+        ["The reply was cut at the limit of 2048 tokens (Settings, Longest reply)."]
+    );
+}
+
+#[tokio::test]
+async fn a_limit_of_zero_sends_no_max_tokens() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let ep = serve(thinking_app(true, seen.clone())).await;
+    let c = agent_peabody_core::http::client();
+    let msgs = [agent_peabody_core::llm::Message::new("user", "hi")];
+    use agent_peabody_core::llm::chat_with;
+    chat_with(&c, &ep, "m", false, false, 2048, &msgs, &[])
+        .await
+        .unwrap();
+    chat_with(&c, &ep, "m", false, false, 0, &msgs, &[])
+        .await
+        .unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0]["max_tokens"], 2048);
+    assert!(seen[1].get("max_tokens").is_none(), "0 means no limit");
+}
+
 /// A server that wants `thinking: disabled`, or one that rejects the field with a 400.
 fn thinking_app(accepts: bool, seen: Arc<Mutex<Vec<Value>>>) -> Router {
     Router::new().route(
@@ -1177,13 +1231,13 @@ async fn thinking_is_disabled_for_a_server_that_thinks_by_default() {
     let c = agent_peabody_core::http::client();
     let msgs = [agent_peabody_core::llm::Message::new("user", "hi")];
     use agent_peabody_core::llm::chat_with;
-    chat_with(&c, &ep, "m", false, true, &msgs, &[])
+    chat_with(&c, &ep, "m", false, true, 0, &msgs, &[])
         .await
         .unwrap();
-    chat_with(&c, &ep, "m", true, true, &msgs, &[])
+    chat_with(&c, &ep, "m", true, true, 0, &msgs, &[])
         .await
         .unwrap();
-    chat_with(&c, &ep, "m", false, false, &msgs, &[])
+    chat_with(&c, &ep, "m", false, false, 0, &msgs, &[])
         .await
         .unwrap();
     let seen = seen.lock().unwrap();
@@ -1202,7 +1256,7 @@ async fn a_server_that_rejects_the_thinking_field_is_asked_again_without_it() {
     let ep = serve(thinking_app(false, seen.clone())).await;
     let c = agent_peabody_core::http::client();
     let msgs = [agent_peabody_core::llm::Message::new("user", "hi")];
-    let r = agent_peabody_core::llm::chat_with(&c, &ep, "m", false, true, &msgs, &[])
+    let r = agent_peabody_core::llm::chat_with(&c, &ep, "m", false, true, 0, &msgs, &[])
         .await
         .unwrap();
     assert_eq!(r.content, "Fine.");

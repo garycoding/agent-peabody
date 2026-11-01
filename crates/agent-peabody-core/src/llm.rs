@@ -137,48 +137,67 @@ pub fn is_anthropic(ep: &Endpoint) -> bool {
         .is_some_and(|host| host == "anthropic.com" || host.ends_with(".anthropic.com"))
 }
 
+/// `max_tokens` is the most the reply may use; 0 sets no limit.
 pub async fn chat(
     c: &reqwest::Client,
     ep: &Endpoint,
     model: &str,
     think: bool,
+    max_tokens: u32,
     messages: &impl Serialize,
     tools: &[Value],
 ) -> Result<Reply, Error> {
-    chat_with(c, ep, model, think, is_anthropic(ep), messages, tools).await
+    chat_with(
+        c,
+        ep,
+        model,
+        think,
+        is_anthropic(ep),
+        max_tokens,
+        messages,
+        tools,
+    )
+    .await
 }
 
 /// As [`chat`], and where `thinking_field` is set with thinking off, also sends
 /// `thinking: {"type": "disabled"}`; a server that answers 400 naming `thinking` is asked
 /// again without it, so that a model that rejects the field still answers.
+#[allow(clippy::too_many_arguments)]
 pub async fn chat_with(
     c: &reqwest::Client,
     ep: &Endpoint,
     model: &str,
     think: bool,
     thinking_field: bool,
+    max_tokens: u32,
     messages: &impl Serialize,
     tools: &[Value],
 ) -> Result<Reply, Error> {
     let off = !think && thinking_field;
-    match send(c, ep, model, think, off, messages, tools).await {
+    match send(c, ep, model, think, off, max_tokens, messages, tools).await {
         Err(Error::Other(e)) if off && e.starts_with("answered 400") && e.contains("thinking") => {
-            send(c, ep, model, think, false, messages, tools).await
+            send(c, ep, model, think, false, max_tokens, messages, tools).await
         }
         r => r,
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send(
     c: &reqwest::Client,
     ep: &Endpoint,
     model: &str,
     think: bool,
     thinking_disabled: bool,
+    max_tokens: u32,
     messages: &impl Serialize,
     tools: &[Value],
 ) -> Result<Reply, Error> {
     let mut body = json!({ "messages": messages, "stream": false });
+    if max_tokens > 0 {
+        body["max_tokens"] = json!(max_tokens);
+    }
     if thinking_disabled {
         body["thinking"] = json!({"type": "disabled"});
     }
