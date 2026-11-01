@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.8.0] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Features
+
+- A longest-reply setting, sent as max_tokens (#29)
+
 ## [v0.7.2] - 2026-10-31
 
 ### Highlights
