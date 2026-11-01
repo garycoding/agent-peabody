@@ -4,6 +4,16 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.5.2] - 2026-10-31
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Bug fixes
+
+- Clear and Compact act at once, abandoning a waiting question (#19)
+
 ## [v0.5.1] - 2026-10-31
 
 ### Highlights
