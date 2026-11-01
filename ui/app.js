@@ -15,7 +15,7 @@ function el(tag, attrs, ...children) {
   return e;
 }
 
-const WHO = { heard: "Input", holding: "Peabody", tool: "Tool", notice: "Note", cleared: "Cleared", to_model: "To model", from_model: "From model", replied: "Peabody", compacted: "Summary", error: "Problem" };
+const WHO = { heard: "Input", holding: "Peabody", tool: "Tool", notice: "Note", cleared: "Cleared", hushed: "Hushed", to_model: "To model", from_model: "From model", replied: "Peabody", compacted: "Summary", error: "Problem" };
 
 function lineText(l) {
   if (l.kind === "compacted") return "The conversation was summarised: " + l.summary;
