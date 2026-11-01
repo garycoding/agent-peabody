@@ -5,7 +5,7 @@
 
 use agent_peabody_core::graptostream::{self, Link, Listen};
 use agent_peabody_core::pipeline::{
-    self, Emit, Event, MAX_TOOL_ROUNDS, NO_ANSWER, NO_MODEL, Pipeline, Timing,
+    self, Emit, Event, LAST_ROUND, MAX_TOOL_ROUNDS, NO_ANSWER, NO_MODEL, Pipeline, Timing,
 };
 use agent_peabody_core::settings::{Endpoint, Settings};
 use axum::Router;
@@ -623,6 +623,20 @@ async fn stops_offering_tools_after_the_last_round() {
         requests[MAX_TOOL_ROUNDS].get("tools").is_none(),
         "the last request offers none"
     );
+    // ...and tells the model that its rounds are used up, in that request only.
+    let last = requests[MAX_TOOL_ROUNDS]["messages"].as_array().unwrap();
+    assert_eq!(last.last().unwrap()["role"], "user");
+    assert_eq!(last.last().unwrap()["content"], LAST_ROUND);
+    let before = requests[MAX_TOOL_ROUNDS - 1]["messages"]
+        .as_array()
+        .unwrap();
+    assert!(before.iter().all(|m| m["content"] != LAST_ROUND));
+    assert!(
+        p.conversation
+            .messages
+            .iter()
+            .all(|m| m.content != LAST_ROUND)
+    );
     assert_eq!(tools.calls.lock().unwrap().len(), MAX_TOOL_ROUNDS);
     assert_eq!(voice.said.lock().unwrap()[0]["text"], "Enough.");
 }
@@ -1074,4 +1088,125 @@ async fn lists_models_from_a_server_that_wants_a_version_header() {
     let ep = serve(app).await;
     let models = agent_peabody_core::llm::models(&agent_peabody_core::http::client(), &ep).await;
     assert_eq!(models.unwrap(), ["claude-haiku-5-5", "claude-sonnet-5-5"]);
+}
+
+fn ended(content: &str, finish: &str, total: u32) -> (StatusCode, Value) {
+    (
+        StatusCode::OK,
+        json!({"choices": [{"finish_reason": finish, "message": {"content": content}}],
+               "usage": {"prompt_tokens": total / 2, "completion_tokens": total - total / 2, "total_tokens": total}}),
+    )
+}
+
+#[tokio::test]
+async fn an_empty_reply_says_why_it_was_empty() {
+    let (model, voice) = (Model::default(), Voice::default());
+    model.replies.lock().unwrap().extend([
+        ended("", "length", 8586),
+        ended("", "refusal", 100),
+        ended("", "", 100),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, events) = collect();
+    let mut p = Pipeline::new(
+        settings(&model, &voice).await,
+        dir.path().join("c.json"),
+        emit,
+    );
+    for q in ["one", "two", "three"] {
+        p.answer(q).await;
+    }
+    let said = voice.said.lock().unwrap();
+    assert!(said.iter().all(|s| s["text"] == NO_ANSWER));
+    let errors: Vec<String> = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            Event::Error { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            "The model used its whole output allowance without answering (hidden thinking?).",
+            "The model returned no answer (it ended with: refusal).",
+            "The model returned no answer.",
+        ]
+    );
+}
+
+/// A server that wants `thinking: disabled`, or one that rejects the field with a 400.
+fn thinking_app(accepts: bool, seen: Arc<Mutex<Vec<Value>>>) -> Router {
+    Router::new().route(
+        "/v1/chat/completions",
+        post(move |axum::Json(body): axum::Json<Value>| {
+            let seen = seen.clone();
+            async move {
+                let has = body.get("thinking").is_some();
+                seen.lock().unwrap().push(body);
+                if has && !accepts {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(json!({"error": {"message": "thinking: disabled is not supported for this model"}})),
+                    )
+                } else {
+                    reply("Fine.", 20)
+                        .pipe_json()
+                }
+            }
+        }),
+    )
+}
+
+trait PipeJson {
+    fn pipe_json(self) -> (StatusCode, axum::Json<Value>);
+}
+
+impl PipeJson for (StatusCode, Value) {
+    fn pipe_json(self) -> (StatusCode, axum::Json<Value>) {
+        (self.0, axum::Json(self.1))
+    }
+}
+
+#[tokio::test]
+async fn thinking_is_disabled_for_a_server_that_thinks_by_default() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let ep = serve(thinking_app(true, seen.clone())).await;
+    let c = agent_peabody_core::http::client();
+    let msgs = [agent_peabody_core::llm::Message::new("user", "hi")];
+    use agent_peabody_core::llm::chat_with;
+    chat_with(&c, &ep, "m", false, true, &msgs, &[])
+        .await
+        .unwrap();
+    chat_with(&c, &ep, "m", true, true, &msgs, &[])
+        .await
+        .unwrap();
+    chat_with(&c, &ep, "m", false, false, &msgs, &[])
+        .await
+        .unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0]["thinking"], json!({"type": "disabled"}));
+    assert!(seen[1].get("thinking").is_none(), "thinking on: no field");
+    assert!(
+        seen[2].get("thinking").is_none(),
+        "a server that does not want it: no field"
+    );
+    assert_eq!(seen[0]["reasoning_effort"], "none");
+}
+
+#[tokio::test]
+async fn a_server_that_rejects_the_thinking_field_is_asked_again_without_it() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let ep = serve(thinking_app(false, seen.clone())).await;
+    let c = agent_peabody_core::http::client();
+    let msgs = [agent_peabody_core::llm::Message::new("user", "hi")];
+    let r = agent_peabody_core::llm::chat_with(&c, &ep, "m", false, true, &msgs, &[])
+        .await
+        .unwrap();
+    assert_eq!(r.content, "Fine.");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert!(seen[0].get("thinking").is_some() && seen[1].get("thinking").is_none());
 }
