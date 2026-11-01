@@ -506,6 +506,8 @@ fn tool_call(name: &str, arguments: Value) -> (StatusCode, Value) {
 #[derive(Clone, Default)]
 struct Tools {
     calls: Arc<Mutex<Vec<Value>>>,
+    /// What a tool call returns, where not the default sentence.
+    result: Arc<Mutex<Option<String>>>,
 }
 
 async fn tools_server(t: &Tools, name: &'static str) -> Endpoint {
@@ -532,7 +534,9 @@ fn tools_app(t: Tools, name: &'static str) -> Router {
                         }
                         Some("tools/call") => {
                             t.calls.lock().unwrap().push(json!({"server": name, "params": body["params"]}));
-                            json!({"content": [{"type": "text", "text": "It is 1:20 pm in California."}]})
+                            let text = t.result.lock().unwrap().clone()
+                                .unwrap_or_else(|| "It is 1:20 pm in California.".into());
+                            json!({"content": [{"type": "text", "text": text}]})
                         }
                         _ => return (StatusCode::ACCEPTED, [("mcp-session-id", "s1")], String::new()),
                     };
@@ -582,7 +586,7 @@ async fn calls_the_tools_the_model_asks_for_and_keeps_only_the_answer() {
     );
     assert_eq!(last["content"], "It is 1:20 pm in California.");
     assert_eq!(second[second.len() - 2]["tool_calls"][0]["id"], "c1");
-    // The conversation keeps the question and the answer only.
+    // The conversation keeps the question and the answer, with the tool's short result.
     let kept: Vec<&str> = p
         .conversation
         .messages
@@ -591,7 +595,10 @@ async fn calls_the_tools_the_model_asks_for_and_keeps_only_the_answer() {
         .collect();
     assert_eq!(
         kept,
-        ["what time is it in California?", "It is twenty past one."]
+        [
+            "what time is it in California?",
+            "It is twenty past one.\n\n[search said: It is 1:20 pm in California.]"
+        ]
     );
     assert!(events.lock().unwrap().contains(&Event::Tool {
         text: "search: time in California".into()
@@ -1018,4 +1025,25 @@ async fn an_old_hush_replayed_after_a_reconnection_is_ignored() {
             .any(|e| matches!(e, Event::Hushed { .. }))
     );
     assert_eq!(voice.said.lock().unwrap()[0]["text"], "Fine.");
+}
+
+#[tokio::test]
+async fn a_long_tool_result_is_not_kept_in_the_conversation() {
+    let (model, voice, tools) = (Model::default(), Voice::default(), Tools::default());
+    *tools.result.lock().unwrap() = Some("x".repeat(pipeline::KEEP_TOOL_RESULT + 1));
+    model.replies.lock().unwrap().extend([
+        tool_call("search", json!({"query": "everything"})),
+        reply("Here is the gist.", 120),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, _) = collect();
+    let mut s = settings(&model, &voice).await;
+    s.tools = vec![tools_server(&tools, "stub").await];
+    let mut p = Pipeline::new(s, dir.path().join("c.json"), emit);
+    p.answer("search for everything").await;
+    assert_eq!(p.conversation.messages[1].content, "Here is the gist.");
+    // The next question starts afresh: nothing is carried over.
+    model.replies.lock().unwrap().push(reply("Fine.", 80));
+    p.answer("and?").await;
+    assert_eq!(p.conversation.messages[3].content, "Fine.");
 }

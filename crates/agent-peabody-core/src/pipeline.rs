@@ -28,6 +28,10 @@ pub const NO_ANSWER: &str = "I have no answer to that.";
 /// The most rounds of tool calls for one question; after them the model is asked to
 /// answer with what it has, so that a model that keeps searching cannot loop.
 pub const MAX_TOOL_ROUNDS: usize = 4;
+/// The longest tool result kept in the conversation with the answer it served, in
+/// characters: a time, a weather report or a calculation, but not search results or a
+/// fetched page, which would fill a small context window.
+pub const KEEP_TOOL_RESULT: usize = 500;
 /// Spoken when the model cannot be reached or refuses the request.
 pub const NO_MODEL: &str = "I could not get an answer from the model.";
 
@@ -123,6 +127,8 @@ pub struct Pipeline {
     /// What phonorheos was given for the question in hand: each item's id, and whether it
     /// is the answer (rather than the instant reply), so that a hush can withdraw them.
     spoken: Vec<(String, bool)>,
+    /// The short tool results of the question in hand, kept with its answer.
+    kept: Vec<String>,
     emit: Emit,
 }
 
@@ -140,6 +146,7 @@ impl Pipeline {
             servers: Vec::new(),
             offered: Vec::new(),
             spoken: Vec::new(),
+            kept: Vec::new(),
             emit,
         }
     }
@@ -250,9 +257,15 @@ impl Pipeline {
                 } else {
                     r.content
                 };
+                // Short tool results stay with the answer, so that a follow-up ("what day
+                // is it there?") can draw on what the tool said and the answer left out.
+                let kept: String = std::mem::take(&mut self.kept)
+                    .iter()
+                    .map(|k| format!("\n\n[{k}]"))
+                    .collect();
                 self.conversation
                     .messages
-                    .push(Message::new("assistant", &text));
+                    .push(Message::new("assistant", &format!("{text}{kept}")));
                 text
             }
             Err(e) => {
@@ -295,6 +308,7 @@ impl Pipeline {
     async fn ask(&mut self, req: &[Message]) -> Result<llm::Reply, llm::Error> {
         let tools: Vec<Value> = self.offered.iter().map(Offered::as_chat_tool).collect();
         let mut messages: Vec<Value> = req.iter().map(|m| json!(m)).collect();
+        self.kept.clear();
         for round in 0..=MAX_TOOL_ROUNDS {
             let offer: &[Value] = if round < MAX_TOOL_ROUNDS { &tools } else { &[] };
             let r = self.chat(&messages, offer, "").await?;
@@ -306,6 +320,10 @@ impl Pipeline {
             );
             for call in &r.tool_calls {
                 let output = self.call_tool(call).await;
+                if output.chars().count() <= KEEP_TOOL_RESULT && !output.starts_with("The tool") {
+                    let name = call["function"]["name"].as_str().unwrap_or("tool");
+                    self.kept.push(format!("{name} said: {output}"));
+                }
                 messages
                     .push(json!({"role": "tool", "tool_call_id": call["id"], "content": output}));
             }
