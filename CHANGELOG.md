@@ -4,6 +4,20 @@ All notable changes to this project are recorded here.
 
 ## [Unreleased]
 
+## [v0.9.0] - 2026-11-02
+
+### Highlights
+
+_Highlights were not generated for this release._
+
+### Features
+
+- Stamp every conversation entry with its time and date (#32)
+
+### Docs
+
+- State daily use and the MacBook Air M5 (#31)
+
 ## [v0.8.0] - 2026-10-31
 
 ### Highlights
