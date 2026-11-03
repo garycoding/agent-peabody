@@ -13,6 +13,11 @@ use serde_json::{Value, json};
 pub struct Message {
     pub role: String,
     pub content: String,
+    /// The time-date stamp of the message: when it was made, as `Mon 2 Nov 2026, 14:01 PST`.
+    /// Kept in the saved conversation and shown to the model as a prefix to `content` (see
+    /// `time_date_stamp`), never sent as a field of its own; messages saved before it existed have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_date_stamp: Option<String>,
 }
 
 impl Message {
@@ -20,6 +25,27 @@ impl Message {
         Self {
             role: role.into(),
             content: content.into(),
+            time_date_stamp: None,
+        }
+    }
+
+    /// The message as a request carries it: the time-date stamp, if any, as a prefix to the text.
+    pub fn with_stamp_in_text(&self) -> Self {
+        Self {
+            content: match &self.time_date_stamp {
+                Some(t) => crate::time_date_stamp::prefix(t, &self.content),
+                None => self.content.clone(),
+            },
+            time_date_stamp: None,
+            ..self.clone()
+        }
+    }
+
+    /// A message made now, with its time-date stamp.
+    pub fn stamped(role: &str, content: &str) -> Self {
+        Self {
+            time_date_stamp: Some(crate::time_date_stamp::now()),
+            ..Self::new(role, content)
         }
     }
 }

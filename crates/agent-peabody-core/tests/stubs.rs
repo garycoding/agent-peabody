@@ -294,9 +294,23 @@ async fn answers_in_its_voice_and_keeps_the_conversation() {
         .iter()
         .map(|m| m["content"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        texts[1..],
-        ["what is two plus two?", "Four.", "and three more?"]
+    // Each entry carries the time-date stamp it was made at, as a prefix to its text.
+    let bare: Vec<&str> = texts[1..]
+        .iter()
+        .map(|t| {
+            let (stamp, text) = t.split_once("] ").expect("a stamped entry");
+            assert!(stamp.starts_with('['), "{t}");
+            text
+        })
+        .collect();
+    assert_eq!(bare, ["what is two plus two?", "Four.", "and three more?"]);
+    // The stamp is a prefix only: the request has no field of its own for it.
+    assert!(
+        second["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m.get("time_date_stamp").is_none())
     );
     assert!(events.lock().unwrap().contains(&Event::Context {
         tokens: Some(150),
@@ -311,6 +325,29 @@ async fn answers_in_its_voice_and_keeps_the_conversation() {
             .len(),
         4
     );
+}
+
+#[tokio::test]
+async fn a_stamp_a_model_puts_at_the_start_of_its_reply_is_not_kept_or_spoken() {
+    let (model, voice) = (Model::default(), Voice::default());
+    model
+        .replies
+        .lock()
+        .unwrap()
+        .extend([reply("[Mon 2 Nov 2026, 14:01 PST] It is two o'clock.", 100)]);
+    let dir = tempfile::tempdir().unwrap();
+    let (emit, _) = collect();
+    let mut p = Pipeline::new(
+        settings(&model, &voice).await,
+        dir.path().join("c.json"),
+        emit,
+    );
+    p.connect().await;
+    p.answer("what time is it?").await;
+    assert_eq!(voice.said.lock().unwrap()[0]["text"], "It is two o'clock.");
+    let answer = &p.conversation.messages[1];
+    assert_eq!(answer.content, "It is two o'clock.");
+    assert!(answer.time_date_stamp.is_some());
 }
 
 #[tokio::test]
@@ -802,7 +839,9 @@ async fn shows_every_request_to_the_model_and_every_reply() {
         ]
     );
     // Opened, a request shows every message and what was offered; a reply its parts.
-    assert!(traffic[0].2.contains("[user]\nweather?"));
+    // The user's message is shown as sent: after its time-date stamp.
+    assert!(traffic[0].2.contains("[user]\n["));
+    assert!(traffic[0].2.contains("] weather?"));
     assert!(
         traffic[0]
             .2
