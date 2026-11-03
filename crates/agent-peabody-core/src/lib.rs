@@ -12,4 +12,5 @@ pub mod phonorheos;
 pub mod pipeline;
 pub mod settings;
 mod store;
+pub mod time_date_stamp;
 pub mod voices;

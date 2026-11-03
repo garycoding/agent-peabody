@@ -58,7 +58,7 @@ impl Conversation {
                 &format!("A summary of the conversation so far:\n{s}"),
             ));
         }
-        out.extend(self.messages.iter().cloned());
+        out.extend(self.messages.iter().map(Message::with_stamp_in_text));
         out
     }
 
@@ -90,7 +90,7 @@ impl Conversation {
             } else {
                 "Person"
             };
-            text.push_str(&format!("{who}: {}\n\n", m.content));
+            text.push_str(&format!("{who}: {}\n\n", m.with_stamp_in_text().content));
         }
         Some(vec![
             Message::new("system", SUMMARY_PROMPT),
@@ -118,6 +118,30 @@ mod tests {
             c.messages.push(Message::new("assistant", &format!("a{i}")));
         }
         c
+    }
+
+    #[test]
+    fn a_request_carries_each_stamp_in_the_text_and_the_file_keeps_it_as_a_field() {
+        let mut c = Conversation::default();
+        c.messages.push(Message {
+            time_date_stamp: Some("Mon 2 Nov 2026, 14:01 PST".into()),
+            ..Message::new("user", "what time is it?")
+        });
+        c.messages.push(Message::new("assistant", "Two."));
+        let sent = c.request("");
+        assert_eq!(
+            sent[0].content,
+            "[Mon 2 Nov 2026, 14:01 PST] what time is it?"
+        );
+        assert_eq!(sent[0].time_date_stamp, None);
+        assert_eq!(sent[1].content, "Two.");
+        let saved = serde_json::to_string(&c).unwrap();
+        assert!(saved.contains(r#""time_date_stamp":"Mon 2 Nov 2026, 14:01 PST""#));
+        assert_eq!(serde_json::from_str::<Conversation>(&saved).unwrap(), c);
+        // A conversation saved before the stamp existed still loads.
+        let old = r#"{"messages":[{"role":"user","content":"hi"}]}"#;
+        let loaded: Conversation = serde_json::from_str(old).unwrap();
+        assert_eq!(loaded.messages[0].time_date_stamp, None);
     }
 
     #[test]

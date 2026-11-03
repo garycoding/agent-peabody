@@ -230,7 +230,9 @@ impl Pipeline {
         self.spoken.clear();
         (self.emit)(Event::Heard { text: heard.into() });
         self.say_instant_reply().await;
-        self.conversation.messages.push(Message::new("user", heard));
+        self.conversation
+            .messages
+            .push(Message::stamped("user", heard));
         // Asked again until known, in case the server was not up when Peabody started.
         if self.context.is_none() {
             self.learn_context().await;
@@ -255,7 +257,8 @@ impl Pipeline {
             Ok(r) => {
                 self.link(Service::Llm, Ok(()));
                 self.conversation.tokens = r.total_tokens;
-                let text = if r.content.is_empty() {
+                let content = crate::time_date_stamp::strip(&r.content);
+                let text = if content.is_empty() {
                     (self.emit)(Event::Error {
                         text: match r.finish_reason.as_str() {
                             "length" => "The model used its whole output allowance without answering (hidden thinking?).".to_string(),
@@ -275,7 +278,7 @@ impl Pipeline {
                             },
                         });
                     }
-                    r.content
+                    content.to_string()
                 };
                 // Short tool results stay with the answer, so that a follow-up ("what day
                 // is it there?") can draw on what the tool said and the answer left out.
@@ -285,7 +288,7 @@ impl Pipeline {
                     .collect();
                 self.conversation
                     .messages
-                    .push(Message::new("assistant", &format!("{text}{kept}")));
+                    .push(Message::stamped("assistant", &format!("{text}{kept}")));
                 text
             }
             Err(e) => {
