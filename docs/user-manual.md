@@ -38,6 +38,8 @@ With tools servers set, Peabody lists their tools in the model's instructions, a
 
 To interrupt Peabody, say its spoken name and "hush" ("Aristotle, hush"), even while it is talking: graptostream (v0.3.0 or later) hears it within a fraction of a second, Peabody stops speaking at once, abandons an answer it is still waiting for, and marks an answer it was cut off in as "(interrupted)" in the conversation. The window shows "Hushed". The word is graptostream's interrupt word, "hush" by default; "<name> hush" is never passed to Peabody as a question. A distinct, longer spoken name is heard more reliably over Peabody's own voice: in tests, "Aristotle" was heard every time, "Jarvis" most times, "Peabody" (often heard as "Pea buddy") only one time in three.
 
+Every entry in the conversation carries the time and date at which it was made, in the local time zone, for example `Mon 2 Nov 2026, 14:01 PST`. The stamp is saved with the entry and shown to the model as a bracketed prefix to the entry's text, so that the model can tell how old each earlier statement is (a time or a weather report said minutes ago is no longer true); it is not a field of the request. If a model begins its own reply with a stamp, Peabody removes it before the reply is kept or spoken. Conversations saved before this existed load as before, their entries without stamps.
+
 Peabody remembers the conversation, including after it is closed and reopened. There is no way to start afresh: when the conversation grows to three quarters of the model's context window, Peabody asks the model to summarise all but the last four exchanges, and carries on from the summary. The window shows each summary.
 
 ## Settings
